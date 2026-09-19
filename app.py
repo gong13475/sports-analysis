@@ -1,27 +1,20 @@
 import streamlit as st
 import requests
 import pandas as pd
+from datetime import datetime
 
 st.set_page_config(
-    page_title="승무패 배당 분석",
+    page_title="전종목 해외배당 분석",
     page_icon="⚽",
     layout="wide"
 )
 
-st.title("⚽ 해외 승무패 배당 분석")
-st.caption("해외 최신 배당을 승·무·패 확률로 변환합니다.")
+st.title("⚽🏀⚾🏒🎾 전종목 해외배당 분석")
+st.caption("최신 해외배당 → 배당확률 → 승/무/패 분석")
 
-# -----------------------------
-# 설정
-# -----------------------------
-
-sports = {
-    "EPL": "soccer_epl",
-    "스페인 라리가": "soccer_spain_la_liga",
-    "독일 분데스리가": "soccer_germany_bundesliga",
-    "이탈리아 세리에A": "soccer_italy_serie_a",
-    "프랑스 리그1": "soccer_france_ligue_one"
-}
+# =========================================================
+# API KEY
+# =========================================================
 
 st.sidebar.header("⚙️ 설정")
 
@@ -30,79 +23,109 @@ api_key = st.sidebar.text_input(
     type="password"
 )
 
-league_name = st.sidebar.selectbox(
-    "리그",
-    list(sports.keys())
-)
+# =========================================================
+# 스포츠 목록
+# =========================================================
 
-sport = sports[league_name]
+def get_sports():
 
-regions = st.sidebar.multiselect(
-    "해외 배당지역",
-    ["uk", "eu", "us", "au"],
-    default=["uk", "eu"]
-)
+    if not api_key:
+        return []
 
-# -----------------------------
-# 확률 계산
-# -----------------------------
+    url = "https://api.the-odds-api.com/v4/sports/"
 
-def calculate_probability(home, draw, away):
+    try:
+        r = requests.get(
+            url,
+            params={"apiKey": api_key},
+            timeout=30
+        )
 
-    a = 1 / home
-    b = 1 / draw
-    c = 1 / away
+        if r.status_code != 200:
+            return []
 
-    total = a + b + c
+        return r.json()
 
-    return (
-        a / total * 100,
-        b / total * 100,
-        c / total * 100
-    )
+    except:
+        return []
 
-# -----------------------------
+
+# =========================================================
 # 배당 가져오기
-# -----------------------------
+# =========================================================
 
-def get_odds():
+def get_odds(sport_key):
 
-    url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
+    url = (
+        f"https://api.the-odds-api.com/v4/"
+        f"sports/{sport_key}/odds/"
+    )
 
     params = {
         "apiKey": api_key,
-        "regions": ",".join(regions),
+        "regions": "uk,eu",
         "markets": "h2h",
         "oddsFormat": "decimal",
         "dateFormat": "iso"
     }
 
-    response = requests.get(
-        url,
-        params=params,
-        timeout=30
-    )
+    try:
 
-    if response.status_code != 200:
-
-        st.error(
-            f"배당 API 오류: {response.status_code}"
+        r = requests.get(
+            url,
+            params=params,
+            timeout=30
         )
 
-        st.code(response.text)
+        if r.status_code != 200:
 
+            st.error(
+                f"배당 API 오류: {r.status_code}"
+            )
+
+            return []
+
+        return r.json()
+
+    except Exception as e:
+
+        st.error(str(e))
         return []
 
-    return response.json()
 
-# -----------------------------
+# =========================================================
+# 배당 → 확률
+# =========================================================
+
+def calculate_probability(odds):
+
+    values = []
+
+    for x in odds:
+        if x and x > 0:
+            values.append(1 / x)
+        else:
+            values.append(0)
+
+    total = sum(values)
+
+    if total == 0:
+        return [0 for x in values]
+
+    return [
+        x / total * 100
+        for x in values
+    ]
+
+
+# =========================================================
 # 경기 분석
-# -----------------------------
+# =========================================================
 
-def analyze(game):
+def analyze_game(game):
 
-    home = game["home_team"]
-    away = game["away_team"]
+    home = game.get("home_team", "")
+    away = game.get("away_team", "")
 
     rows = []
 
@@ -117,35 +140,34 @@ def analyze(game):
             "outcomes", []
         )
 
-        home_odds = None
-        draw_odds = None
-        away_odds = None
+        prices = {}
 
         for item in outcomes:
 
-            name = item["name"]
-            price = item["price"]
+            name = item.get("name")
+            price = item.get("price")
 
             if name == home:
-                home_odds = price
+                prices["home"] = price
 
             elif name == away:
-                away_odds = price
+                prices["away"] = price
 
             elif name.lower() == "draw":
-                draw_odds = price
+                prices["draw"] = price
 
         if (
-            home_odds
-            and draw_odds
-            and away_odds
+            "home" in prices
+            and "away" in prices
         ):
 
             rows.append({
-                "업체": bookmaker["title"],
-                "승": home_odds,
-                "무": draw_odds,
-                "패": away_odds
+                "업체": bookmaker.get(
+                    "title", ""
+                ),
+                "승": prices["home"],
+                "무": prices.get("draw"),
+                "패": prices["away"]
             })
 
     if not rows:
@@ -154,31 +176,62 @@ def analyze(game):
     df = pd.DataFrame(rows)
 
     avg_home = df["승"].mean()
-    avg_draw = df["무"].mean()
     avg_away = df["패"].mean()
 
-    p_home, p_draw, p_away = calculate_probability(
-        avg_home,
-        avg_draw,
-        avg_away
-    )
+    has_draw = df["무"].notna().any()
 
-    probabilities = {
-        "승": p_home,
-        "무": p_draw,
-        "패": p_away
-    }
+    if has_draw:
 
-    recommendation = max(
-        probabilities,
-        key=probabilities.get
-    )
+        avg_draw = df["무"].mean()
+
+        probabilities = calculate_probability([
+            avg_home,
+            avg_draw,
+            avg_away
+        ])
+
+        p_home = probabilities[0]
+        p_draw = probabilities[1]
+        p_away = probabilities[2]
+
+        recommendation = max(
+            {
+                "승": p_home,
+                "무": p_draw,
+                "패": p_away
+            },
+            key={
+                "승": p_home,
+                "무": p_draw,
+                "패": p_away
+            }.get
+        )
+
+    else:
+
+        probabilities = calculate_probability([
+            avg_home,
+            avg_away
+        ])
+
+        p_home = probabilities[0]
+        p_draw = 0
+        p_away = probabilities[1]
+
+        recommendation = (
+            "승"
+            if p_home >= p_away
+            else "패"
+        )
 
     return {
         "경기": f"{home} vs {away}",
-        "시간": game.get("commence_time", ""),
+        "시간": game.get(
+            "commence_time", ""
+        ),
         "승배당": avg_home,
-        "무배당": avg_draw,
+        "무배당": avg_draw
+        if has_draw else None,
         "패배당": avg_away,
         "승확률": p_home,
         "무확률": p_draw,
@@ -188,30 +241,293 @@ def analyze(game):
         "업체별": df
     }
 
-# -----------------------------
-# 실행
-# -----------------------------
+
+# =========================================================
+# API KEY 확인
+# =========================================================
+
+if not api_key:
+
+    st.info(
+        "👈 왼쪽에 The Odds API Key를 입력하세요."
+    )
+
+    st.stop()
+
+
+# =========================================================
+# 스포츠 목록
+# =========================================================
+
+sports = get_sports()
+
+if not sports:
+
+    st.error(
+        "스포츠 목록을 가져오지 못했습니다."
+    )
+
+    st.stop()
+
+
+# =========================================================
+# 스포츠 선택
+# =========================================================
+
+sport_names = {}
+
+for sport in sports:
+
+    title = sport.get(
+        "title",
+        sport.get("key", "")
+    )
+
+    key = sport.get("key")
+
+    sport_names[title] = key
+
+
+selected_name = st.sidebar.selectbox(
+    "🏆 종목 / 리그",
+    sorted(sport_names.keys())
+)
+
+selected_sport = sport_names[selected_name]
+
+
+# =========================================================
+# 경기 불러오기
+# =========================================================
 
 if st.button(
-    "🔄 최신 배당 불러오기",
+    "🔄 최신 해외배당 불러오기",
     type="primary"
 ):
 
-    if not api_key:
+    with st.spinner(
+        "최신 배당을 가져오는 중..."
+    ):
+
+        games = get_odds(
+            selected_sport
+        )
+
+    if not games:
 
         st.warning(
-            "왼쪽에 The Odds API Key를 입력하세요."
+            "현재 배당이 있는 경기가 없습니다."
         )
 
         st.stop()
 
-    with st.spinner(
-        "해외 배당을 불러오는 중..."
-    ):
+    results = []
 
-        games = get_odds()
+    for game in games:
 
-if not games:
-    st.warning(
-        "배당 데이터가 없습니다."
+        result = analyze_game(game)
+
+        if result:
+            results.append(result)
+
+    if not results:
+
+        st.warning(
+            "분석 가능한 경기가 없습니다."
+        )
+
+        st.stop()
+
+    st.success(
+        f"{len(results)}경기 분석 완료"
+    )
+
+
+    # =====================================================
+    # 전체 경기표
+    # =====================================================
+
+    table = []
+
+    for r in results:
+
+        table.append({
+            "경기": r["경기"],
+            "승": f"{r['승배당']:.2f}",
+            "무": (
+                "-"
+                if r["무배당"] is None
+                else f"{r['무배당']:.2f}"
+            ),
+            "패": f"{r['패배당']:.2f}",
+            "승확률": f"{r['승확률']:.1f}%",
+            "무확률": (
+                "-"
+                if r["무배당"] is None
+                else f"{r['무확률']:.1f}%"
+            ),
+            "패확률": f"{r['패확률']:.1f}%",
+            "추천": r["추천"],
+            "업체수": r["업체수"]
+        })
+
+    df_table = pd.DataFrame(table)
+
+    st.subheader(
+        f"📋 {selected_name}"
+    )
+
+    st.dataframe(
+        df_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    # =====================================================
+    # 무승부 가능성
+    # =====================================================
+
+    draw_games = [
+        x for x in results
+        if x["무배당"] is not None
+    ]
+
+    if draw_games:
+
+        st.subheader(
+            "⚠️ 무승부 가능성 높은 경기"
+        )
+
+        draw_games = sorted(
+            draw_games,
+            key=lambda x: x["무확률"],
+            reverse=True
+        )
+
+        for r in draw_games[:10]:
+
+            if r["무확률"] >= 25:
+
+                st.warning(
+                    f"{r['경기']}  "
+                    f"→ 무 {r['무확률']:.1f}%"
+                )
+
+
+    # =====================================================
+    # 고확률 경기
+    # =====================================================
+
+    st.subheader(
+        "🔥 고확률 경기"
+    )
+
+    high_games = sorted(
+        results,
+        key=lambda x: max(
+            x["승확률"],
+            x["무확률"],
+            x["패확률"]
+        ),
+        reverse=True
+    )
+
+    for r in high_games[:10]:
+
+        best = max(
+            r["승확률"],
+            r["무확률"],
+            r["패확률"]
+        )
+
+        if best >= 50:
+
+            st.success(
+                f"⭐ {r['경기']}  "
+                f"→ {r['추천']} "
+                f"{best:.1f}%"
+            )
+
+
+    # =====================================================
+    # 상세 분석
+    # =====================================================
+
+    st.subheader(
+        "📊 경기 상세 분석"
+    )
+
+    for r in results:
+
+        st.markdown(
+            f"### ⚽ {r['경기']}"
+        )
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+
+            st.metric(
+                "승",
+                f"{r['승확률']:.1f}%",
+                f"배당 {r['승배당']:.2f}"
+            )
+
+        with c2:
+
+            if r["무배당"] is not None:
+
+                st.metric(
+                    "무",
+                    f"{r['무확률']:.1f}%",
+                    f"배당 {r['무배당']:.2f}"
+                )
+
+            else:
+
+                st.metric(
+                    "무",
+                    "해당없음"
+                )
+
+        with c3:
+
+            st.metric(
+                "패",
+                f"{r['패확률']:.1f}%",
+                f"배당 {r['패배당']:.2f}"
+            )
+
+        st.write(
+            f"⭐ 추천: **{r['추천']}**"
+        )
+
+        with st.expander(
+            "🌎 해외업체별 배당"
+        ):
+
+            st.dataframe(
+                r["업체별"],
+                use_container_width=True,
+                hide_index=True
+            )
+
+        st.divider()
+
+
+    # =====================================================
+    # CSV 다운로드
+    # =====================================================
+
+    csv = df_table.to_csv(
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    st.download_button(
+        "📥 분석결과 CSV 저장",
+        csv,
+        "sports_analysis.csv",
+        "text/csv"
     )
