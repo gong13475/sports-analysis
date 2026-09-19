@@ -18,35 +18,7 @@ st.set_page_config(
 
 DB_FILE = "historical_odds.db"
 
+BASE_URL = "https://www.football-data.co.uk/mmz4281"
+
 
 # =========================================================
-# CSS
-# =========================================================
-
-st.markdown("""
-<style>
-
-.block-container {
-    max-width: 750px;
-    padding: 1rem;
-}
-
-h1 {
-    text-align: center;
-}
-
-div.stButton > button {
-    width: 100%;
-    min-height: 50px;
-    font-size: 17px;
-    font-weight: bold;
-}
-
-.success-box {
-    background: #e9f7ef;
-    padding: 15px;
-    border-radius: 10px;
-    margin: 10px 0;
-}
-
-.error-box
