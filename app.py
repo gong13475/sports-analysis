@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 from historical_db import build_database
 import os
+import sqlite3
 st.set_page_config(
     page_title="전종목 해외배당 분석",
     page_icon="⚽",
@@ -253,7 +254,86 @@ def analyze_game(game):
 # =========================================================
 # API KEY 확인
 # =========================================================
+    }
 
+# =========================================================
+# 과거 5년 배당구간 분석
+# =========================================================
+
+def historical_probability(
+    home_odds,
+    draw_odds,
+    away_odds
+):
+
+    if not os.path.exists("historical.db"):
+        return None
+
+    try:
+
+        conn = sqlite3.connect(
+            "historical.db"
+        )
+
+        query = """
+        SELECT result, COUNT(*) AS cnt
+        FROM matches
+        WHERE home_odds BETWEEN ? AND ?
+        AND away_odds BETWEEN ? AND ?
+        GROUP BY result
+        """
+
+        df = pd.read_sql_query(
+            query,
+            conn,
+            params=[
+                home_odds - 0.05,
+                home_odds + 0.05,
+                away_odds - 0.05,
+                away_odds + 0.05
+            ]
+        )
+
+        conn.close()
+
+        if df.empty:
+            return None
+
+        total = df["cnt"].sum()
+
+        result = {
+            "승": 0,
+            "무": 0,
+            "패": 0
+        }
+
+        for _, row in df.iterrows():
+
+            if row["result"] == "H":
+                result["승"] = (
+                    row["cnt"] / total * 100
+                )
+
+            elif row["result"] == "D":
+                result["무"] = (
+                    row["cnt"] / total * 100
+                )
+
+            elif row["result"] == "A":
+                result["패"] = (
+                    row["cnt"] / total * 100
+                )
+
+        result["경기수"] = int(total)
+
+        return result
+
+    except Exception:
+        return None
+
+
+# =========================================================
+# API KEY 확인
 if not api_key:
 
     st.info(
