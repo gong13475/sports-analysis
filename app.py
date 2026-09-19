@@ -5,6 +5,7 @@ from datetime import datetime
 from historical_db import build_database
 import os
 import sqlite3
+
 st.set_page_config(
     page_title="전종목 해외배당 분석",
     page_icon="⚽",
