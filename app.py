@@ -8,22 +8,23 @@ import requests
 import streamlit as st
 
 
-# ============================================================
-# 1. 기본 설정
-# ============================================================
+# =========================================================
+# 기본 설정
+# =========================================================
 
 st.set_page_config(
-    page_title="해외 배당 승무패 분석",
+    page_title="해외배당 승무패 분석",
     page_icon="⚽",
-    layout="centered"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-APP_DIR = os.path.dirname(
+BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
 
 DB_FILE = os.path.join(
-    APP_DIR,
+    BASE_DIR,
     "historical_odds.db"
 )
 
@@ -32,187 +33,181 @@ BASE_URL = (
 )
 
 
-# ============================================================
-# 2. 리그
-# ============================================================
-
-LEAGUES = {
-
-    "잉글랜드 1부": {
-        "code": "E0",
-        "country": "England",
-        "division": 1
-    },
-
-    "잉글랜드 2부": {
-        "code": "E1",
-        "country": "England",
-        "division": 2
-    },
-
-    "잉글랜드 3부": {
-        "code": "E2",
-        "country": "England",
-        "division": 3
-    },
-
-    "잉글랜드 4부": {
-        "code": "E3",
-        "country": "England",
-        "division": 4
-    },
-
-    "독일 1부": {
-        "code": "D1",
-        "country": "Germany",
-        "division": 1
-    },
-
-    "독일 2부": {
-        "code": "D2",
-        "country": "Germany",
-        "division": 2
-    },
-
-    "이탈리아 1부": {
-        "code": "I1",
-        "country": "Italy",
-        "division": 1
-    },
-
-    "이탈리아 2부": {
-        "code": "I2",
-        "country": "Italy",
-        "division": 2
-    },
-
-    "스페인 1부": {
-        "code": "SP1",
-        "country": "Spain",
-        "division": 1
-    },
-
-    "스페인 2부": {
-        "code": "SP2",
-        "country": "Spain",
-        "division": 2
-    },
-
-    "프랑스 1부": {
-        "code": "F1",
-        "country": "France",
-        "division": 1
-    },
-
-    "프랑스 2부": {
-        "code": "F2",
-        "country": "France",
-        "division": 2
-    },
-
-    "네덜란드 1부": {
-        "code": "N1",
-        "country": "Netherlands",
-        "division": 1
-    },
-
-    "벨기에 1부": {
-        "code": "B1",
-        "country": "Belgium",
-        "division": 1
-    },
-
-    "포르투갈 1부": {
-        "code": "P1",
-        "country": "Portugal",
-        "division": 1
-    },
-
-    "스코틀랜드 1부": {
-        "code": "SC0",
-        "country": "Scotland",
-        "division": 1
-    },
-
-    "스코틀랜드 2부": {
-        "code": "SC1",
-        "country": "Scotland",
-        "division": 2
-    },
-
-    "터키 1부": {
-        "code": "T1",
-        "country": "Turkey",
-        "division": 1
-    },
-
-    "그리스 1부": {
-        "code": "G1",
-        "country": "Greece",
-        "division": 1
-    }
-}
-
-
-# ============================================================
-# 3. 시즌
-# ============================================================
+# =========================================================
+# 시즌
+#
+# 2020/21 ~ 2026/27
+#
+# 중요:
+# 2020/21 = 2021
+# 2021/22 = 2122
+# =========================================================
 
 SEASONS = {
-
+    "2026/27": "2627",
+    "2025/26": "2526",
     "2024/25": "2425",
     "2023/24": "2324",
     "2022/23": "2223",
     "2021/22": "2122",
-    "2020/21": "2021",
-    "2019/20": "1920",
-    "2018/19": "1819",
-    "2017/18": "1718",
-    "2016/17": "1617",
-    "2015/16": "1516"
-
+    "2020/21": "2021"
 }
 
 
-# ============================================================
-# 4. DB 생성
-# ============================================================
+# =========================================================
+# 리그 목록
+# =========================================================
+
+LEAGUES = {
+
+    # England
+    "잉글랜드 1부": ("E0", "England", 1),
+    "잉글랜드 2부": ("E1", "England", 2),
+    "잉글랜드 3부": ("E2", "England", 3),
+    "잉글랜드 4부": ("E3", "England", 4),
+    "잉글랜드 5부": ("EC", "England", 5),
+
+    # Scotland
+    "스코틀랜드 1부": ("SC0", "Scotland", 1),
+    "스코틀랜드 2부": ("SC1", "Scotland", 2),
+    "스코틀랜드 3부": ("SC2", "Scotland", 3),
+    "스코틀랜드 4부": ("SC3", "Scotland", 4),
+
+    # Germany
+    "독일 1부": ("D1", "Germany", 1),
+    "독일 2부": ("D2", "Germany", 2),
+
+    # Italy
+    "이탈리아 1부": ("I1", "Italy", 1),
+    "이탈리아 2부": ("I2", "Italy", 2),
+
+    # Spain
+    "스페인 1부": ("SP1", "Spain", 1),
+    "스페인 2부": ("SP2", "Spain", 2),
+
+    # France
+    "프랑스 1부": ("F1", "France", 1),
+    "프랑스 2부": ("F2", "France", 2),
+
+    # Netherlands
+    "네덜란드 1부": ("N1", "Netherlands", 1),
+
+    # Belgium
+    "벨기에 1부": ("B1", "Belgium", 1),
+
+    # Portugal
+    "포르투갈 1부": ("P1", "Portugal", 1),
+
+    # Turkey
+    "터키 1부": ("T1", "Turkey", 1),
+
+    # Greece
+    "그리스 1부": ("G1", "Greece", 1),
+
+    # Worldwide additional leagues
+    "아르헨티나 1부": ("ARG", "Argentina", 1),
+    "오스트리아 1부": ("AUT", "Austria", 1),
+    "브라질 1부": ("BRA", "Brazil", 1),
+    "중국 1부": ("CHN", "China", 1),
+    "덴마크 1부": ("DNK", "Denmark", 1),
+    "핀란드 1부": ("FIN", "Finland", 1),
+    "아일랜드 1부": ("IRL", "Ireland", 1),
+    "일본 1부": ("JPN", "Japan", 1),
+    "멕시코 1부": ("MEX", "Mexico", 1),
+    "노르웨이 1부": ("NOR", "Norway", 1),
+    "폴란드 1부": ("POL", "Poland", 1),
+    "루마니아 1부": ("ROU", "Romania", 1),
+    "러시아 1부": ("RUS", "Russia", 1),
+    "스웨덴 1부": ("SWE", "Sweden", 1),
+    "스위스 1부": ("SWZ", "Switzerland", 1),
+    "미국 MLS": ("USA", "USA", 1)
+}
+
+
+# =========================================================
+# 배당 사이트
+#
+# Closing Odds를 먼저 사용
+# 없으면 일반 Odds 사용
+# =========================================================
+
+BOOKMAKERS = {
+
+    "Bet365": {
+        "normal": ("B365H", "B365D", "B365A"),
+        "closing": ("B365CH", "B365CD", "B365CA")
+    },
+
+    "William Hill": {
+        "normal": ("WHH", "WHD", "WHA"),
+        "closing": ("WHCH", "WHCD", "WHCA")
+    },
+
+    "Bet&Win": {
+        "normal": ("BWH", "BWD", "BWA"),
+        "closing": ("BWCH", "BWCD", "BWCA")
+    },
+
+    "Ladbrokes": {
+        "normal": ("LBH", "LBD", "LBA"),
+        "closing": ("LBCH", "LBCD", "LBCA")
+    },
+
+    "Gamebookers": {
+        "normal": ("GBH", "GBD", "GBA"),
+        "closing": ("GBCH", "GBCD", "GBCA")
+    },
+
+    "Interwetten": {
+        "normal": ("IWH", "IWD", "IWA"),
+        "closing": ("IWCH", "IWCD", "IWCA")
+    },
+
+    "VC Bet": {
+        "normal": ("VCH", "VCD", "VCA"),
+        "closing": ("VCCH", "VCCD", "VCCA")
+    },
+
+    "Stan James": {
+        "normal": ("SJH", "SJD", "SJA"),
+        "closing": ("SJCH", "SJCD", "SJCA")
+    },
+
+    "Pinnacle": {
+        "normal": ("PSH", "PSD", "PSA"),
+        "closing": ("PSCH", "PSCD", "PSCA")
+    },
+
+    "Betfair": {
+        "normal": ("BFH", "BFD", "BFA"),
+        "closing": ("BFCH", "BFCD", "BFCA")
+    }
+}
+
+
+# =========================================================
+# DB 생성
+# =========================================================
 
 def create_database():
 
     conn = sqlite3.connect(DB_FILE)
 
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS matches (
 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
             country TEXT,
-
             league TEXT,
-
             division INTEGER,
-
             season TEXT,
-
             match_date TEXT,
 
             home_team TEXT,
-
             away_team TEXT,
 
             result TEXT,
-
-            bet365_home REAL,
-
-            bet365_draw REAL,
-
-            bet365_away REAL,
-
-            odds_type TEXT,
-
-            source TEXT,
 
             created_at TEXT,
 
@@ -224,141 +219,43 @@ def create_database():
                 away_team
             )
         )
-        """
-    )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS odds (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            match_id INTEGER,
+
+            bookmaker TEXT,
+
+            odds_type TEXT,
+
+            home_odds REAL,
+            draw_odds REAL,
+            away_odds REAL,
+
+            UNIQUE(
+                match_id,
+                bookmaker,
+                odds_type
+            )
+        )
+    """)
 
     conn.commit()
     conn.close()
 
 
-# 프로그램 시작 시 DB 생성
 create_database()
 
 
-# ============================================================
-# 5. DB 경기수
-# ============================================================
+# =========================================================
+# 숫자 변환
+# =========================================================
 
-def get_database_count():
-
-    try:
-
-        conn = sqlite3.connect(DB_FILE)
-
-        row = conn.execute(
-            "SELECT COUNT(*) FROM matches"
-        ).fetchone()
-
-        conn.close()
-
-        if row is None:
-            return 0
-
-        return int(row[0])
-
-    except Exception:
-
-        return 0
-
-
-# ============================================================
-# 6. DB 읽기
-# ============================================================
-
-def read_database():
-
-    try:
-
-        conn = sqlite3.connect(DB_FILE)
-
-        df = pd.read_sql_query(
-            "SELECT * FROM matches",
-            conn
-        )
-
-        conn.close()
-
-        return df
-
-    except Exception:
-
-        return pd.DataFrame()
-
-
-# ============================================================
-# 7. CSV 다운로드
-# ============================================================
-
-def download_csv(
-    season_code,
-    league_code
-):
-
-    url = (
-        BASE_URL
-        + "/"
-        + season_code
-        + "/"
-        + league_code
-        + ".csv"
-    )
-
-    try:
-
-        response = requests.get(
-            url,
-            timeout=30,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 "
-                    "(Windows NT 10.0; Win64; x64)"
-                )
-            }
-        )
-
-        if response.status_code != 200:
-
-            return (
-                None,
-                "HTTP 오류: "
-                + str(response.status_code),
-                url
-            )
-
-        if len(response.content) < 500:
-
-            return (
-                None,
-                "다운로드 파일이 비어 있거나 너무 작습니다.",
-                url
-            )
-
-        response.encoding = "latin1"
-
-        df = pd.read_csv(
-            StringIO(response.text)
-        )
-
-        return (
-            df,
-            None,
-            url
-        )
-
-    except Exception as error:
-
-        return (
-            None,
-            str(error),
-            url
-        )
-
-
-# ============================================================
-# 8. 숫자 변환
-# ============================================================
-
-def to_number(value):
+def safe_float(value):
 
     try:
 
@@ -378,63 +275,127 @@ def to_number(value):
         return number
 
     except Exception:
-
         return None
 
 
-# ============================================================
-# 9. Bet365 컬럼 찾기
-# ============================================================
+# =========================================================
+# CSV 다운로드
+# =========================================================
 
-def find_bet365_columns(df):
+@st.cache_data(
+    ttl=3600,
+    show_spinner=False
+)
+def download_csv(
+    season_code,
+    league_code
+):
 
-    # 마감배당
-    if all(
-        x in df.columns
-        for x in [
-            "B365CH",
-            "B365CD",
-            "B365CA"
-        ]
-    ):
+    url = (
+        BASE_URL
+        + "/"
+        + season_code
+        + "/"
+        + league_code
+        + ".csv"
+    )
 
-        return (
-            "B365CH",
-            "B365CD",
-            "B365CA",
-            "마감배당"
+    try:
+
+        response = requests.get(
+            url,
+            timeout=25,
+            headers={
+                "User-Agent":
+                "Mozilla/5.0"
+            }
         )
 
-    # 일반 Bet365 배당
-    if all(
-        x in df.columns
-        for x in [
-            "B365H",
-            "B365D",
-            "B365A"
-        ]
-    ):
+        if response.status_code != 200:
+            return None
 
-        return (
-            "B365H",
-            "B365D",
-            "B365A",
-            "일반배당"
+        if len(response.content) < 200:
+            return None
+
+        response.encoding = "latin1"
+
+        text = response.text
+
+        if "HomeTeam" not in text:
+            return None
+
+        return pd.read_csv(
+            StringIO(text)
         )
 
-    return (
-        None,
-        None,
-        None,
-        "배당없음"
+    except Exception:
+        return None
+
+
+# =========================================================
+# 컬럼 존재 여부
+# =========================================================
+
+def columns_exist(
+    df,
+    columns
+):
+
+    return all(
+        col in df.columns
+        for col in columns
     )
 
 
-# ============================================================
-# 10. 필수 컬럼 검사
-# ============================================================
+# =========================================================
+# 사이트 검색
+# =========================================================
 
-def check_required_columns(df):
+def detect_bookmakers(df):
+
+    found = {}
+
+    for name, config in BOOKMAKERS.items():
+
+        closing = config["closing"]
+        normal = config["normal"]
+
+        if columns_exist(
+            df,
+            closing
+        ):
+
+            found[name] = {
+                "home": closing[0],
+                "draw": closing[1],
+                "away": closing[2],
+                "type": "마감"
+            }
+
+        elif columns_exist(
+            df,
+            normal
+        ):
+
+            found[name] = {
+                "home": normal[0],
+                "draw": normal[1],
+                "away": normal[2],
+                "type": "일반"
+            }
+
+    return found
+
+
+# =========================================================
+# 데이터 저장
+# =========================================================
+
+def save_dataframe(
+    df,
+    league_name,
+    season_name
+):
 
     required = [
         "Date",
@@ -443,52 +404,31 @@ def check_required_columns(df):
         "FTR"
     ]
 
-    missing = []
+    if not columns_exist(
+        df,
+        required
+    ):
+        return 0, set()
 
-    for column in required:
-
-        if column not in df.columns:
-            missing.append(column)
-
-    return missing
-
-
-# ============================================================
-# 11. DB 저장
-# ============================================================
-
-def save_matches(
-    df,
-    league_name,
-    season_name
-):
-
-    missing = check_required_columns(df)
-
-    if len(missing) > 0:
-
-        return (
-            0,
-            0,
-            "필수 컬럼 없음: "
-            + ", ".join(missing)
-        )
-
-    league_info = LEAGUES[
+    country = LEAGUES[
         league_name
-    ]
+    ][1]
 
-    (
-        home_col,
-        draw_col,
-        away_col,
-        odds_type
-    ) = find_bet365_columns(df)
+    division = LEAGUES[
+        league_name
+    ][2]
 
-    conn = sqlite3.connect(DB_FILE)
+    bookmakers = detect_bookmakers(
+        df
+    )
 
-    processed = 0
-    inserted = 0
+    conn = sqlite3.connect(
+        DB_FILE
+    )
+
+    match_count = 0
+
+    site_names = set()
 
     for _, row in df.iterrows():
 
@@ -503,14 +443,13 @@ def save_matches(
                 "D",
                 "A"
             ]:
-
                 continue
 
-            home_team = str(
+            home = str(
                 row["HomeTeam"]
             ).strip()
 
-            away_team = str(
+            away = str(
                 row["AwayTeam"]
             ).strip()
 
@@ -518,106 +457,109 @@ def save_matches(
                 row["Date"]
             ).strip()
 
-            if not home_team:
+            if (
+                home == ""
+                or away == ""
+                or match_date == ""
+            ):
                 continue
 
-            if not away_team:
-                continue
-
-            # ------------------------------
-            # 배당
-            # ------------------------------
-
-            if home_col is not None:
-
-                home_odds = to_number(
-                    row[home_col]
-                )
-
-                draw_odds = to_number(
-                    row[draw_col]
-                )
-
-                away_odds = to_number(
-                    row[away_col]
-                )
-
-            else:
-
-                home_odds = None
-                draw_odds = None
-                away_odds = None
-
-            # ------------------------------
-            # 저장
-            # ------------------------------
-
-            cursor = conn.execute(
-                """
+            conn.execute("""
                 INSERT OR IGNORE INTO matches (
 
                     country,
                     league,
                     division,
                     season,
-
                     match_date,
-
                     home_team,
                     away_team,
-
                     result,
-
-                    bet365_home,
-                    bet365_draw,
-                    bet365_away,
-
-                    odds_type,
-
-                    source,
                     created_at
 
                 )
 
-                VALUES (
-                    ?, ?, ?, ?,
-                    ?, ?, ?,
-                    ?,
-                    ?, ?, ?,
-                    ?,
-                    ?, ?
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                country,
+                league_name,
+                division,
+                season_name,
+                match_date,
+                home,
+                away,
+                result,
+                datetime.now().isoformat()
+            ))
+
+            match = conn.execute("""
+                SELECT id
+                FROM matches
+
+                WHERE league = ?
+                AND season = ?
+                AND match_date = ?
+                AND home_team = ?
+                AND away_team = ?
+            """, (
+                league_name,
+                season_name,
+                match_date,
+                home,
+                away
+            )).fetchone()
+
+            if match is None:
+                continue
+
+            match_id = match[0]
+
+            for site, config in bookmakers.items():
+
+                home_odds = safe_float(
+                    row[config["home"]]
                 )
-                """,
-                (
-                    league_info["country"],
-                    league_name,
-                    league_info["division"],
-                    season_name,
 
-                    match_date,
+                draw_odds = safe_float(
+                    row[config["draw"]]
+                )
 
-                    home_team,
-                    away_team,
+                away_odds = safe_float(
+                    row[config["away"]]
+                )
 
-                    result,
+                if (
+                    home_odds is None
+                    or draw_odds is None
+                    or away_odds is None
+                ):
+                    continue
 
+                conn.execute("""
+                    INSERT OR REPLACE INTO odds (
+
+                        match_id,
+                        bookmaker,
+                        odds_type,
+                        home_odds,
+                        draw_odds,
+                        away_odds
+
+                    )
+
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    match_id,
+                    site,
+                    config["type"],
                     home_odds,
                     draw_odds,
-                    away_odds,
+                    away_odds
+                ))
 
-                    odds_type,
+                site_names.add(site)
 
-                    "Football-Data.co.uk",
-
-                    datetime.now().isoformat()
-                )
-            )
-
-            processed += 1
-
-            if cursor.rowcount == 1:
-
-                inserted += 1
+            match_count += 1
 
         except Exception:
             continue
@@ -625,366 +567,205 @@ def save_matches(
     conn.commit()
     conn.close()
 
-    return (
-        inserted,
-        processed,
-        odds_type
-    )
+    return match_count, site_names
 
 
-# ============================================================
-# 12. 데이터 수집
-# ============================================================
+# =========================================================
+# 전체 데이터 업데이트
+# =========================================================
 
-def collect_data(
-    selected_leagues,
-    selected_seasons
-):
+def update_all_data():
 
     total_jobs = (
-        len(selected_leagues)
+        len(SEASONS)
         *
-        len(selected_seasons)
+        len(LEAGUES)
     )
 
-    current_job = 0
-
-    total_inserted = 0
-    total_processed = 0
+    job = 0
+    total_matches = 0
+    all_sites = set()
 
     progress = st.progress(0)
 
-    for league_name in selected_leagues:
+    status = st.empty()
 
-        league_code = LEAGUES[
-            league_name
-        ]["code"]
+    for season_name, season_code in SEASONS.items():
 
-        for season_name in selected_seasons:
+        for league_name in LEAGUES:
 
-            current_job += 1
+            job += 1
 
             progress.progress(
-                current_job / total_jobs
+                job / total_jobs
             )
 
-            st.divider()
-
-            st.write(
-                "📥 "
-                + league_name
-                + " / "
-                + season_name
+            status.write(
+                f"📥 {job}/{total_jobs} "
+                f"| {season_name} "
+                f"| {league_name}"
             )
 
-            # ------------------------------
-            # URL
-            # ------------------------------
+            league_code = LEAGUES[
+                league_name
+            ][0]
 
-            df, error, url = download_csv(
-                SEASONS[season_name],
+            df = download_csv(
+                season_code,
                 league_code
             )
 
-            st.write("요청 주소")
-
-            st.code(url)
-
-            # ------------------------------
-            # 다운로드 실패
-            # ------------------------------
-
-            if error is not None:
-
-                st.error(
-                    "❌ CSV 다운로드 실패"
-                )
-
-                st.code(error)
-
-                continue
-
-            # ------------------------------
-            # 다운로드 성공
-            # ------------------------------
-
             if df is None:
-
-                st.error(
-                    "❌ CSV 데이터가 없습니다."
-                )
-
                 continue
 
-            st.success(
-                "✅ CSV 다운로드 성공"
-            )
-
-            st.write(
-                "CSV 행 수:",
-                len(df)
-            )
-
-            # ------------------------------
-            # 컬럼 확인
-            # ------------------------------
-
-            with st.expander(
-                "CSV 컬럼 확인"
-            ):
-
-                st.write(
-                    list(df.columns)
-                )
-
-            # ------------------------------
-            # 필수 컬럼
-            # ------------------------------
-
-            missing = check_required_columns(
-                df
-            )
-
-            if len(missing) > 0:
-
-                st.error(
-                    "❌ 필수 컬럼이 없습니다."
-                )
-
-                st.write(
-                    missing
-                )
-
-                continue
-
-            st.success(
-                "✅ 경기 결과 컬럼 확인"
-            )
-
-            # ------------------------------
-            # Bet365 확인
-            # ------------------------------
-
-            (
-                home_col,
-                draw_col,
-                away_col,
-                odds_type
-            ) = find_bet365_columns(df)
-
-            if home_col is None:
-
-                st.warning(
-                    "⚠️ Bet365 배당 컬럼이 없습니다."
-                )
-
-                st.write(
-                    "경기 결과는 저장할 수 있지만 "
-                    "배당 분석에는 사용할 수 없습니다."
-                )
-
-            else:
-
-                st.success(
-                    "✅ Bet365 배당 컬럼 확인"
-                )
-
-                st.write(
-                    "승:",
-                    home_col
-                )
-
-                st.write(
-                    "무:",
-                    draw_col
-                )
-
-                st.write(
-                    "패:",
-                    away_col
-                )
-
-                st.write(
-                    "종류:",
-                    odds_type
-                )
-
-            # ------------------------------
-            # DB 저장
-            # ------------------------------
-
-            (
-                inserted,
-                processed,
-                save_result
-            ) = save_matches(
+            count, sites = save_dataframe(
                 df,
                 league_name,
                 season_name
             )
 
-            total_inserted += inserted
-            total_processed += processed
+            total_matches += count
 
-            st.write(
-                "처리 경기:",
-                processed
-            )
-
-            st.write(
-                "신규 저장:",
-                inserted
-            )
-
-            st.write(
-                "저장 상태:",
-                save_result
-            )
-
-            # ------------------------------
-            # 실제 DB 확인
-            # ------------------------------
-
-            current_count = (
-                get_database_count()
-            )
-
-            st.metric(
-                "현재 historical_odds.db",
-                f"{current_count:,} 경기"
+            all_sites.update(
+                sites
             )
 
     progress.progress(1.0)
 
-    st.divider()
-
-    final_count = get_database_count()
-
-    st.success(
-        "🎉 데이터 수집 완료"
-    )
-
-    st.write(
-        "총 처리:",
-        total_processed
-    )
-
-    st.write(
-        "총 신규 저장:",
-        total_inserted
-    )
-
-    st.write(
-        "최종 DB 경기:",
-        final_count
+    status.success(
+        "✅ 데이터 업데이트 완료"
     )
 
     return (
-        total_inserted,
-        total_processed
+        total_matches,
+        all_sites
     )
 
 
-# ============================================================
-# 13. 배당 분석
-# ============================================================
+# =========================================================
+# DB 데이터 읽기
+# =========================================================
 
-def analyze_odds(
+@st.cache_data(
+    ttl=60
+)
+def load_database():
+
+    conn = sqlite3.connect(
+        DB_FILE
+    )
+
+    query = """
+        SELECT
+
+            m.country,
+            m.league,
+            m.division,
+            m.season,
+            m.match_date,
+
+            m.home_team,
+            m.away_team,
+            m.result,
+
+            o.bookmaker,
+            o.odds_type,
+
+            o.home_odds,
+            o.draw_odds,
+            o.away_odds
+
+        FROM matches m
+
+        INNER JOIN odds o
+
+        ON m.id = o.match_id
+    """
+
+    df = pd.read_sql_query(
+        query,
+        conn
+    )
+
+    conn.close()
+
+    return df
+
+
+# =========================================================
+# 유사 배당 분석
+# =========================================================
+
+def analyze_bookmaker(
     df,
+    bookmaker,
     home_odds,
     draw_odds,
     away_odds,
-    tolerance,
-    selected_league
+    tolerance
 ):
 
-    if df.empty:
+    data = df[
+        df["bookmaker"]
+        ==
+        bookmaker
+    ].copy()
+
+    if data.empty:
         return None
 
-    # 리그 선택
-    if selected_league != "전체":
-
-        df = df[
-            df["league"]
-            ==
-            selected_league
+    data = data.dropna(
+        subset=[
+            "home_odds",
+            "draw_odds",
+            "away_odds",
+            "result"
         ]
+    )
 
-    if df.empty:
+    if data.empty:
         return None
 
-    required_odds = [
-        "bet365_home",
-        "bet365_draw",
-        "bet365_away"
-    ]
-
-    for column in required_odds:
-
-        if column not in df.columns:
-            return None
-
-    # 배당 없는 경기 제거
-    df = df.dropna(
-        subset=required_odds
-    ).copy()
-
-    if df.empty:
-        return None
-
-    # ------------------------------
-    # 배당 차이
-    # ------------------------------
-
-    df["승차이"] = abs(
-        df["bet365_home"]
+    data["diff_home"] = (
+        data["home_odds"]
         -
         home_odds
-    )
+    ).abs()
 
-    df["무차이"] = abs(
-        df["bet365_draw"]
+    data["diff_draw"] = (
+        data["draw_odds"]
         -
         draw_odds
-    )
+    ).abs()
 
-    df["패차이"] = abs(
-        df["bet365_away"]
+    data["diff_away"] = (
+        data["away_odds"]
         -
         away_odds
+    ).abs()
+
+    data["distance"] = (
+        data["diff_home"]
+        +
+        data["diff_draw"]
+        +
+        data["diff_away"]
     )
 
-    # ------------------------------
-    # 유사배당
-    # ------------------------------
-
-    similar = df[
-        (df["승차이"] <= tolerance)
+    similar = data[
+        (data["diff_home"] <= tolerance)
         &
-        (df["무차이"] <= tolerance)
+        (data["diff_draw"] <= tolerance)
         &
-        (df["패차이"] <= tolerance)
+        (data["diff_away"] <= tolerance)
     ].copy()
 
     if similar.empty:
         return None
 
-    # 전체 차이
-    similar["총차이"] = (
-        similar["승차이"]
-        +
-        similar["무차이"]
-        +
-        similar["패차이"]
-    )
-
-    similar = similar.sort_values(
-        "총차이"
-    )
-
     total = len(similar)
 
-    win_count = int(
+    win = int(
         (
             similar["result"]
             ==
@@ -992,7 +773,7 @@ def analyze_odds(
         ).sum()
     )
 
-    draw_count = int(
+    draw = int(
         (
             similar["result"]
             ==
@@ -1000,7 +781,7 @@ def analyze_odds(
         ).sum()
     )
 
-    loss_count = int(
+    loss = int(
         (
             similar["result"]
             ==
@@ -1009,677 +790,723 @@ def analyze_odds(
     )
 
     return {
-
-        "data": similar,
-
         "total": total,
-
-        "win_count": win_count,
-
-        "draw_count": draw_count,
-
-        "loss_count": loss_count,
-
-        "win_pct":
-            win_count
-            /
-            total
-            *
-            100,
-
-        "draw_pct":
-            draw_count
-            /
-            total
-            *
-            100,
-
-        "loss_pct":
-            loss_count
-            /
-            total
-            *
-            100
+        "win": win,
+        "draw": draw,
+        "loss": loss,
+        "win_pct": win / total * 100,
+        "draw_pct": draw / total * 100,
+        "loss_pct": loss / total * 100,
+        "data": similar.sort_values(
+            "distance"
+        )
     }
 
 
-# ============================================================
-# 14. 제목
-# ============================================================
+# =========================================================
+# 화면
+# =========================================================
 
 st.title(
-    "⚽ 해외 배당 승무패 분석"
+    "⚽ 해외배당 승무패 분석"
 )
 
 st.caption(
-    "과거 Bet365 배당 + 경기 결과 기반"
+    "2020/21 ~ 2026/27 · 마감배당 우선 · 해외사이트별 분석"
 )
 
 
-# ============================================================
-# 15. DB 상태
-# ============================================================
+# =========================================================
+# DB 업데이트
+# =========================================================
 
 st.subheader(
-    "🗄️ DB 상태"
+    "📚 데이터 관리"
+)
+
+if st.button(
+    "🔄 2020~2026 전체 데이터 업데이트",
+    use_container_width=True
+):
+
+    with st.spinner(
+        "전세계 축구 데이터를 수집하고 있습니다..."
+    ):
+
+        total, sites = update_all_data()
+
+    st.cache_data.clear()
+
+    st.success(
+        f"완료! 처리 경기: {total:,}건"
+    )
+
+    st.info(
+        "사용 가능한 해외사이트: "
+        + ", ".join(
+            sorted(sites)
+        )
+    )
+
+    st.rerun()
+
+
+# =========================================================
+# DB 읽기
+# =========================================================
+
+try:
+
+    db = load_database()
+
+except Exception:
+
+    db = pd.DataFrame()
+
+
+# =========================================================
+# DB가 비어있는 경우
+# =========================================================
+
+if db.empty:
+
+    st.warning(
+        "⚠️ historical_odds.db에 데이터가 없습니다."
+    )
+
+    st.info(
+        "위의 "
+        "'2020~2026 전체 데이터 업데이트' "
+        "버튼을 한 번 눌러주세요."
+    )
+
+    st.stop()
+
+
+# =========================================================
+# 데이터 현황
+# =========================================================
+
+c1, c2, c3, c4 = st.columns(4)
+
+with c1:
+
+    st.metric(
+        "배당 데이터",
+        f"{len(db):,}"
+    )
+
+with c2:
+
+    st.metric(
+        "해외사이트",
+        db["bookmaker"].nunique()
+    )
+
+with c3:
+
+    st.metric(
+        "리그",
+        db["league"].nunique()
+    )
+
+with c4:
+
+    st.metric(
+        "시즌",
+        db["season"].nunique()
+    )
+
+
+# =========================================================
+# 배당 입력
+# =========================================================
+
+st.divider()
+
+st.header(
+    "🎯 현재 경기 배당 입력"
 )
 
 st.write(
-    "사용 중인 DB 위치:"
+    "팀 이름은 입력하지 않습니다."
 )
 
-st.code(DB_FILE)
-
-if os.path.exists(DB_FILE):
-
-    file_size = os.path.getsize(
-        DB_FILE
-    )
-
-    st.success(
-        "DB 파일 존재 / "
-        + f"{file_size:,} bytes"
-    )
-
-else:
-
-    st.warning(
-        "DB 파일이 없습니다."
-    )
-
-
-database_count = get_database_count()
-
-st.metric(
-    "현재 DB 경기수",
-    f"{database_count:,} 경기"
+st.write(
+    "승·무·패 배당만 입력하면 자동으로 "
+    "2020/21~2026/27 과거 경기와 비교합니다."
 )
 
-
-# ============================================================
-# 16. DB 초기화
-# ============================================================
-
-st.subheader(
-    "🧹 DB 관리"
-)
-
-if st.button(
-    "⚠️ 기존 DB 초기화",
-    use_container_width=True
-):
-
-    try:
-
-        if os.path.exists(DB_FILE):
-
-            os.remove(DB_FILE)
-
-        create_database()
-
-        st.success(
-            "DB 초기화 완료"
-        )
-
-        st.rerun()
-
-    except Exception as error:
-
-        st.error(
-            "DB 초기화 실패"
-        )
-
-        st.code(
-            str(error)
-        )
-
-
-# ============================================================
-# 17. 데이터 수집 설정
-# ============================================================
-
-st.divider()
-
-st.subheader(
-    "📥 과거 데이터 수집"
-)
-
-st.info(
-    "처음에는 잉글랜드 1부 + 2024/25 "
-    "한 개만 테스트하세요."
-)
-
-
-selected_leagues = st.multiselect(
-    "리그 선택",
-    list(LEAGUES.keys()),
-    default=[
-        "잉글랜드 1부"
-    ]
-)
-
-
-selected_seasons = st.multiselect(
-    "시즌 선택",
-    list(SEASONS.keys()),
-    default=[
-        "2024/25"
-    ]
-)
-
-
-# ============================================================
-# 18. 데이터 수집 버튼
-# ============================================================
-
-if st.button(
-    "🚀 데이터 수집 시작",
-    type="primary",
-    use_container_width=True
-):
-
-    if len(selected_leagues) == 0:
-
-        st.error(
-            "리그를 선택하세요."
-        )
-
-    elif len(selected_seasons) == 0:
-
-        st.error(
-            "시즌을 선택하세요."
-        )
-
-    else:
-
-        collect_data(
-            selected_leagues,
-            selected_seasons
-        )
-
-
-# ============================================================
-# 19. 현재 경기
-# ============================================================
-
-st.divider()
-
-st.subheader(
-    "🎯 현재 경기 분석"
-)
-
-home_team = st.text_input(
-    "홈팀",
-    placeholder="예: Liverpool"
-)
-
-away_team = st.text_input(
-    "원정팀",
-    placeholder="예: Chelsea"
-)
-
-
-selected_analysis_league = st.selectbox(
-    "분석 리그",
-    ["전체"]
-    +
-    list(LEAGUES.keys())
-)
-
-
-# ============================================================
-# 20. 배당 입력
-# ============================================================
-
-st.subheader(
-    "💰 현재 승무패 배당"
-)
 
 col1, col2, col3 = st.columns(3)
 
 
 with col1:
 
-    current_home_odds = (
-        st.number_input(
-            "승",
-            min_value=1.01,
-            max_value=100.0,
-            value=1.85,
-            step=0.01
-        )
+    home_odds = st.number_input(
+        "🟢 승 배당",
+        min_value=1.01,
+        max_value=100.0,
+        value=1.85,
+        step=0.01
     )
 
 
 with col2:
 
-    current_draw_odds = (
-        st.number_input(
-            "무",
-            min_value=1.01,
-            max_value=100.0,
-            value=3.60,
-            step=0.01
-        )
+    draw_odds = st.number_input(
+        "🔵 무 배당",
+        min_value=1.01,
+        max_value=100.0,
+        value=3.60,
+        step=0.01
     )
 
 
 with col3:
 
-    current_away_odds = (
-        st.number_input(
-            "패",
-            min_value=1.01,
-            max_value=100.0,
-            value=4.20,
-            step=0.01
-        )
+    away_odds = st.number_input(
+        "🔴 패 배당",
+        min_value=1.01,
+        max_value=100.0,
+        value=4.20,
+        step=0.01
     )
 
 
-# ============================================================
-# 21. 유사배당 범위
-# ============================================================
+# =========================================================
+# 허용범위
+# =========================================================
 
-tolerance = st.select_slider(
-    "🔎 유사배당 허용범위",
-    options=[
-        0.05,
-        0.10,
-        0.15,
-        0.20,
-        0.25,
-        0.30,
-        0.40,
-        0.50
-    ],
-    value=0.20
+tolerance = st.slider(
+    "유사배당 허용범위",
+    min_value=0.05,
+    max_value=0.50,
+    value=0.20,
+    step=0.05
 )
 
 
 st.caption(
-    "예: 0.20이면 각 배당 ±0.20 범위의 "
-    "과거 경기를 검색합니다."
+    f"입력 배당: "
+    f"{home_odds:.2f} / "
+    f"{draw_odds:.2f} / "
+    f"{away_odds:.2f}"
 )
 
 
-# ============================================================
-# 22. 분석
-# ============================================================
+# =========================================================
+# 사이트 목록
+# =========================================================
 
-if st.button(
-    "🔍 승무패 분석하기",
-    type="primary",
-    use_container_width=True
-):
+bookmakers = sorted(
+    db["bookmaker"]
+    .dropna()
+    .unique()
+    .tolist()
+)
 
-    database = read_database()
 
-    if database.empty:
+# =========================================================
+# 분석
+# =========================================================
 
-        st.error(
-            "❌ historical_odds.db가 비어 있습니다."
-        )
+results = {}
 
-        st.info(
-            "먼저 위의 "
-            "'🚀 데이터 수집 시작'을 눌러주세요."
-        )
+for bookmaker in bookmakers:
 
-    else:
+    result = analyze_bookmaker(
+        db,
+        bookmaker,
+        home_odds,
+        draw_odds,
+        away_odds,
+        tolerance
+    )
 
-        analysis = analyze_odds(
-            database,
+    if result is not None:
 
-            current_home_odds,
+        results[
+            bookmaker
+        ] = result
 
-            current_draw_odds,
 
-            current_away_odds,
-
-            tolerance,
-
-            selected_analysis_league
-        )
-
-        if analysis is None:
-
-            st.warning(
-                "⚠️ 현재 배당과 비슷한 "
-                "과거 경기가 없습니다."
-            )
-
-            st.info(
-                "유사배당 범위를 "
-                "0.30~0.50으로 높여보세요."
-            )
-
-        else:
-
-            win_pct = analysis[
-                "win_pct"
-            ]
-
-            draw_pct = analysis[
-                "draw_pct"
-            ]
-
-            loss_pct = analysis[
-                "loss_pct"
-            ]
-
-            st.divider()
-
-            st.subheader(
-                "📊 분석 결과"
-            )
-
-            a, b, c = st.columns(3)
-
-
-            with a:
-
-                st.metric(
-                    "🟢 승",
-                    f"{win_pct:.2f}%"
-                )
-
-
-            with b:
-
-                st.metric(
-                    "🔵 무",
-                    f"{draw_pct:.2f}%"
-                )
-
-
-            with c:
-
-                st.metric(
-                    "🔴 패",
-                    f"{loss_pct:.2f}%"
-                )
-
-
-            probabilities = {
-
-                "승": win_pct,
-
-                "무": draw_pct,
-
-                "패": loss_pct
-
-            }
-
-
-            best = max(
-                probabilities,
-                key=probabilities.get
-            )
-
-
-            st.success(
-                "🏆 과거 최다 결과: "
-                + best
-                + " / "
-                + f"{probabilities[best]:.2f}%"
-            )
-
-
-            st.write(
-                "유사 경기 수:",
-                analysis["total"]
-            )
-
-
-            # ------------------------------
-            # 결과표
-            # ------------------------------
-
-            result_table = pd.DataFrame({
-
-                "결과": [
-                    "승",
-                    "무",
-                    "패"
-                ],
-
-                "경기수": [
-
-                    analysis["win_count"],
-
-                    analysis["draw_count"],
-
-                    analysis["loss_count"]
-
-                ],
-
-                "확률": [
-
-                    f"{win_pct:.2f}%",
-
-                    f"{draw_pct:.2f}%",
-
-                    f"{loss_pct:.2f}%"
-
-                ]
-
-            })
-
-
-            st.dataframe(
-                result_table,
-                use_container_width=True,
-                hide_index=True
-            )
-
-
-            # ------------------------------
-            # 유사 경기
-            # ------------------------------
-
-            st.subheader(
-                "📋 유사배당 경기"
-            )
-
-
-            display = analysis[
-                "data"
-            ][
-                [
-                    "season",
-                    "league",
-                    "match_date",
-                    "home_team",
-                    "away_team",
-                    "bet365_home",
-                    "bet365_draw",
-                    "bet365_away",
-                    "result"
-                ]
-            ].head(100).copy()
-
-
-            display.columns = [
-
-                "시즌",
-                "리그",
-                "날짜",
-                "홈팀",
-                "원정팀",
-                "승배당",
-                "무배당",
-                "패배당",
-                "결과"
-
-            ]
-
-
-            display["결과"] = (
-                display["결과"]
-                .replace(
-                    {
-                        "H": "승",
-                        "D": "무",
-                        "A": "패"
-                    }
-                )
-            )
-
-
-            st.dataframe(
-                display,
-                use_container_width=True,
-                hide_index=True
-            )
-
-
-# ============================================================
-# 23. DB 데이터 확인
-# ============================================================
+# =========================================================
+# 결과
+# =========================================================
 
 st.divider()
 
-st.subheader(
-    "📋 DB 저장 데이터 확인"
+st.header(
+    "📊 해외사이트별 전체 결과"
 )
 
-database = read_database()
 
-
-if database.empty:
+if not results:
 
     st.warning(
-        "현재 DB에는 저장된 경기가 없습니다."
+        "현재 배당과 유사한 과거 경기가 없습니다."
+    )
+
+    st.info(
+        "유사배당 허용범위를 조금 높여보세요."
     )
 
 else:
 
-    st.success(
-        "총 "
-        + f"{len(database):,}"
-        + " 경기 저장됨"
+    # =====================================================
+    # 전체 합계
+    # =====================================================
+
+    total_sample = sum(
+        r["total"]
+        for r in results.values()
     )
 
-    # 리그별 통계
-
-    league_summary = (
-        database
-        .groupby("league")
-        .size()
-        .reset_index(
-            name="경기수"
-        )
-        .sort_values(
-            "경기수",
-            ascending=False
-        )
+    total_win = sum(
+        r["win"]
+        for r in results.values()
     )
 
-
-    st.write(
-        "리그별 경기수"
+    total_draw = sum(
+        r["draw"]
+        for r in results.values()
     )
 
-
-    st.dataframe(
-        league_summary,
-        use_container_width=True,
-        hide_index=True
+    total_loss = sum(
+        r["loss"]
+        for r in results.values()
     )
 
-
-    # 최근 데이터
-
-    st.write(
-        "최근 저장 데이터"
-    )
-
-
-    recent = database.tail(
+    overall_win = (
+        total_win
+        /
+        total_sample
+        *
         100
-    ).copy()
+    )
 
+    overall_draw = (
+        total_draw
+        /
+        total_sample
+        *
+        100
+    )
 
-    recent["result"] = (
-        recent["result"]
-        .replace(
-            {
-                "H": "승",
-                "D": "무",
-                "A": "패"
-            }
-        )
+    overall_loss = (
+        total_loss
+        /
+        total_sample
+        *
+        100
     )
 
 
-    recent_columns = [
+    # =====================================================
+    # 전체 결과
+    # =====================================================
 
-        "season",
-        "league",
-        "match_date",
-        "home_team",
-        "away_team",
-        "bet365_home",
-        "bet365_draw",
-        "bet365_away",
-        "result"
+    st.subheader(
+        "🏆 전체 사이트 종합"
+    )
 
-    ]
+    overall_col1, overall_col2, overall_col3, overall_col4 = (
+        st.columns(4)
+    )
+
+    with overall_col1:
+
+        st.metric(
+            "승",
+            f"{overall_win:.2f}%"
+        )
+
+    with overall_col2:
+
+        st.metric(
+            "무",
+            f"{overall_draw:.2f}%"
+        )
+
+    with overall_col3:
+
+        st.metric(
+            "패",
+            f"{overall_loss:.2f}%"
+        )
+
+    with overall_col4:
+
+        st.metric(
+            "총 표본",
+            f"{total_sample:,}"
+        )
 
 
-    recent_columns = [
-        x
-        for x in recent_columns
-        if x in recent.columns
-    ]
+    # =====================================================
+    # 가장 높은 결과
+    # =====================================================
 
+    overall_values = {
+
+        "승": overall_win,
+
+        "무": overall_draw,
+
+        "패": overall_loss
+    }
+
+    best_result = max(
+        overall_values,
+        key=overall_values.get
+    )
+
+    best_value = (
+        overall_values[
+            best_result
+        ]
+    )
+
+    st.success(
+        f"🔥 전체 사이트에서 가장 많이 나온 결과: "
+        f"{best_result} "
+        f"({best_value:.2f}%)"
+    )
+
+
+    # =====================================================
+    # 사이트별 결과
+    # =====================================================
+
+    st.subheader(
+        "🌍 사이트별 결과"
+    )
+
+    table_rows = []
+
+    for bookmaker, r in results.items():
+
+        table_rows.append({
+
+            "사이트":
+                bookmaker,
+
+            "표본":
+                r["total"],
+
+            "승":
+                f"{r['win_pct']:.2f}%",
+
+            "무":
+                f"{r['draw_pct']:.2f}%",
+
+            "패":
+                f"{r['loss_pct']:.2f}%",
+
+            "최다결과":
+                max(
+                    {
+                        "승": r["win_pct"],
+                        "무": r["draw_pct"],
+                        "패": r["loss_pct"]
+                    },
+                    key={
+                        "승": r["win_pct"],
+                        "무": r["draw_pct"],
+                        "패": r["loss_pct"]
+                    }.get
+                )
+
+        })
+
+
+    result_table = pd.DataFrame(
+        table_rows
+    )
+
+
+    result_table = result_table.sort_values(
+        "표본",
+        ascending=False
+    )
+
+
+    # =====================================================
+    # 핵심: 사이트별 전체 결과를 한 화면
+    # =====================================================
 
     st.dataframe(
-        recent[recent_columns],
+        result_table,
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        height=500
     )
 
 
-# ============================================================
-# 24. CSV 다운로드
-# ============================================================
+    # =====================================================
+    # 사이트별 상세 카드
+    # =====================================================
+
+    st.subheader(
+        "📌 사이트별 상세"
+    )
+
+    # 3개씩 한 줄
+    site_list = list(
+        results.keys()
+    )
+
+    for i in range(
+        0,
+        len(site_list),
+        3
+    ):
+
+        row_sites = site_list[
+            i:i + 3
+        ]
+
+        cols = st.columns(3)
+
+        for col, bookmaker in zip(
+            cols,
+            row_sites
+        ):
+
+            r = results[
+                bookmaker
+            ]
+
+            with col:
+
+                st.markdown(
+                    f"### {bookmaker}"
+                )
+
+                st.metric(
+                    "표본",
+                    f"{r['total']:,}건"
+                )
+
+                st.write(
+                    f"🟢 승 **{r['win_pct']:.2f}%**"
+                )
+
+                st.write(
+                    f"🔵 무 **{r['draw_pct']:.2f}%**"
+                )
+
+                st.write(
+                    f"🔴 패 **{r['loss_pct']:.2f}%**"
+                )
+
+
+# =========================================================
+# 과거 실제 경기 상세
+# =========================================================
 
 st.divider()
 
-st.subheader(
-    "📥 DB 다운로드"
+st.header(
+    "🔎 유사배당 실제 경기"
+)
+
+selected_site = st.selectbox(
+    "사이트 선택",
+    sorted(
+        results.keys()
+    )
 )
 
 
-if not database.empty:
+if selected_site in results:
 
-    csv_data = database.to_csv(
-        index=False,
-        encoding="utf-8-sig"
+    r = results[
+        selected_site
+    ]
+
+    detail = r[
+        "data"
+    ].head(100).copy()
+
+    detail["결과"] = (
+        detail["result"]
+        .replace({
+            "H": "승",
+            "D": "무",
+            "A": "패"
+        })
+    )
+
+    detail = detail[
+
+        [
+            "season",
+            "league",
+            "match_date",
+            "home_team",
+            "away_team",
+            "home_odds",
+            "draw_odds",
+            "away_odds",
+            "result"
+        ]
+
+    ]
+
+    detail.columns = [
+
+        "시즌",
+        "리그",
+        "날짜",
+        "홈팀",
+        "원정팀",
+        "승배당",
+        "무배당",
+        "패배당",
+        "결과"
+
+    ]
+
+    st.dataframe(
+        detail,
+        use_container_width=True,
+        hide_index=True,
+        height=450
     )
 
 
-    st.download_button(
-        "📥 historical_odds.csv 다운로드",
-        data=csv_data,
-        file_name="historical_odds.csv",
-        mime="text/csv",
-        use_container_width=True
+# =========================================================
+# DB 데이터 현황
+# =========================================================
+
+st.divider()
+
+st.header(
+    "📈 저장된 데이터 현황"
+)
+
+
+season_summary = (
+    db
+    .groupby(
+        "season"
     )
-
-else:
-
-    st.info(
-        "DB에 데이터가 저장되면 "
-        "CSV 다운로드가 가능합니다."
+    .size()
+    .reset_index(
+        name="배당건수"
     )
+    .sort_values(
+        "season",
+        ascending=False
+    )
+)
 
 
-# ============================================================
-# 25. 안내
-# ============================================================
+st.dataframe(
+    season_summary,
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# =========================================================
+# 사이트별 DB 데이터
+# =========================================================
+
+st.subheader(
+    "🌐 DB 사이트별 데이터"
+)
+
+
+site_summary = (
+    db
+    .groupby(
+        "bookmaker"
+    )
+    .size()
+    .reset_index(
+        name="배당건수"
+    )
+    .sort_values(
+        "배당건수",
+        ascending=False
+    )
+)
+
+
+st.dataframe(
+    site_summary,
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# =========================================================
+# 리그별 데이터
+# =========================================================
+
+st.subheader(
+    "🏟️ 리그별 데이터"
+)
+
+
+league_summary = (
+    db
+    .groupby(
+        [
+            "country",
+            "league"
+        ]
+    )
+    .size()
+    .reset_index(
+        name="배당건수"
+    )
+    .sort_values(
+        "배당건수",
+        ascending=False
+    )
+)
+
+
+st.dataframe(
+    league_summary,
+    use_container_width=True,
+    hide_index=True
+)
+
+
+# =========================================================
+# CSV 다운로드
+# =========================================================
+
+st.divider()
+
+st.header(
+    "📥 데이터 다운로드"
+)
+
+
+csv_data = db.to_csv(
+    index=False,
+    encoding="utf-8-sig"
+)
+
+
+st.download_button(
+    "📥 전체 데이터 CSV 저장",
+    data=csv_data,
+    file_name="historical_odds_2020_2026.csv",
+    mime="text/csv",
+    use_container_width=True
+)
+
+
+# =========================================================
+# 안내
+# =========================================================
 
 st.divider()
 
@@ -1688,14 +1515,17 @@ st.caption(
 )
 
 st.caption(
-    "Bet365 마감배당 컬럼이 존재하면 "
-    "마감배당을 우선 사용합니다."
+    "가능한 경우 마감배당(Closing Odds)을 우선 사용합니다."
 )
 
 st.caption(
-    "마감배당이 없으면 일반 Bet365 배당을 사용합니다."
+    "2020/21 ~ 2026/27 현재까지의 데이터를 사용합니다."
 )
 
 st.caption(
-    "과거 통계는 미래 경기 결과를 보장하지 않습니다."
+    "리그 및 시즌에 따라 제공되는 배당사이트가 다를 수 있습니다."
+)
+
+st.caption(
+    "과거 빈도 통계는 미래 경기 결과를 보장하지 않습니다."
 )
