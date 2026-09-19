@@ -212,6 +212,6 @@ if st.button(
         games = get_odds()
 
     if not games:
-
-        st.warning(
- 
+st.warning(
+    "배당 데이터가 없습니다."
+)
