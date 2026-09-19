@@ -2,7 +2,8 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
-
+from historical_db import build_database
+import os
 st.set_page_config(
     page_title="전종목 해외배당 분석",
     page_icon="⚽",
@@ -10,6 +11,13 @@ st.set_page_config(
 )
 
 st.title("⚽🏀⚾🏒🎾 전종목 해외배당 분석")
+if not os.path.exists("historical.db"):
+    with st.spinner("📊 과거 5년 배당 DB를 준비하는 중입니다..."):
+        try:
+            build_database()
+            st.success("✅ 과거 배당 DB 준비 완료")
+        except Exception as e:
+            st.warning(f"과거 DB 생성 오류: {e}")
 st.caption("최신 해외배당 → 배당확률 → 승/무/패 분석")
 
 # =========================================================
