@@ -1,1531 +1,3196 @@
-import os
-import sqlite3
-from io import StringIO
-from datetime import datetime
+# ============================================================
+# SPORTS ANALYZER PRO
+# ============================================================
+#
+# 무료 공개 스포츠 데이터 + 배당 + 결과 + SQLite + 백테스트
+#
+# 기능
+# ------------------------------------------------------------
+# 1. SportScore 공개 API
+# 2. 1.ML 공개 배당 API
+# 3. SportSRC V1 공개 API
+# 4. CSV 수동/자동 import
+# 5. SQLite 자동 저장
+# 6. 경기 중복 제거
+# 7. 승/무/패 확률
+# 8. 오버/언더
+# 9. 배당구간 분석
+# 10. 동일배당 과거 통계
+# 11. 시계열 백테스트
+# 12. ROI
+# 13. 최대낙폭
+# 14. 연속 적중/실패
+# 15. 최근 성과
+# 16. Value Score
+# 17. 종목별 분석
+# 18. 리그별 분석
+# 19. 데이터 출처별 현황
+# 20. 자동 새로고침
+#
+# 실행
+# ------------------------------------------------------------
+# pip install streamlit requests pandas numpy
+# streamlit run app.py
+#
+# ============================================================
 
+import sqlite3
+import json
+import time
+import math
+import hashlib
+from pathlib import Path
+from datetime import datetime, timezone
+
+import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
 
 
-# =========================================================
-# 기본 설정
-# =========================================================
+# ============================================================
+# CONFIG
+# ============================================================
+
+APP_NAME = "Sports Analyzer PRO"
+
+BASE_DIR = Path(__file__).resolve().parent
+
+DATA_DIR = BASE_DIR / "data"
+IMPORT_DIR = DATA_DIR / "import"
+EXPORT_DIR = DATA_DIR / "export"
+
+DB_PATH = DATA_DIR / "sports.db"
+
+DATA_DIR.mkdir(exist_ok=True)
+IMPORT_DIR.mkdir(exist_ok=True)
+EXPORT_DIR.mkdir(exist_ok=True)
+
+
+SPORTSCORE_BASE = "https://sportscore.com"
+
+ONEML_ODDS_URL = "https://1.ml/api/v1/odds"
+
+SPORTSRC_BASE = "https://api.sportsrc.org/"
+
+
+SPORTSCORE_SPORTS = [
+    "football",
+    "basketball",
+    "cricket",
+    "tennis",
+]
+
+
+REQUEST_TIMEOUT = 15
+
+USER_AGENT = (
+    "SportsAnalyzerPRO/1.0 "
+    "(public-data-client)"
+)
+
+
+HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json",
+}
+
+
+# ============================================================
+# STREAMLIT
+# ============================================================
 
 st.set_page_config(
-    page_title="해외배당 승무패 분석",
-    page_icon="⚽",
+    page_title=APP_NAME,
+    page_icon="🏆",
     layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-DB_FILE = os.path.join(
-    BASE_DIR,
-    "historical_odds.db"
-)
-
-BASE_URL = (
-    "https://www.football-data.co.uk/mmz4281"
+    initial_sidebar_state="expanded",
 )
 
 
-# =========================================================
-# 시즌
-#
-# 2020/21 ~ 2026/27
-#
-# 중요:
-# 2020/21 = 2021
-# 2021/22 = 2122
-# =========================================================
+# ============================================================
+# DATABASE
+# ============================================================
 
-SEASONS = {
-    "2026/27": "2627",
-    "2025/26": "2526",
-    "2024/25": "2425",
-    "2023/24": "2324",
-    "2022/23": "2223",
-    "2021/22": "2122",
-    "2020/21": "2021"
-}
+def get_connection():
+
+    return sqlite3.connect(
+        DB_PATH,
+        timeout=30,
+    )
 
 
-# =========================================================
-# 리그 목록
-# =========================================================
+def initialize_database():
 
-LEAGUES = {
+    con = get_connection()
 
-    # England
-    "잉글랜드 1부": ("E0", "England", 1),
-    "잉글랜드 2부": ("E1", "England", 2),
-    "잉글랜드 3부": ("E2", "England", 3),
-    "잉글랜드 4부": ("E3", "England", 4),
-    "잉글랜드 5부": ("EC", "England", 5),
+    cur = con.cursor()
 
-    # Scotland
-    "스코틀랜드 1부": ("SC0", "Scotland", 1),
-    "스코틀랜드 2부": ("SC1", "Scotland", 2),
-    "스코틀랜드 3부": ("SC2", "Scotland", 3),
-    "스코틀랜드 4부": ("SC3", "Scotland", 4),
-
-    # Germany
-    "독일 1부": ("D1", "Germany", 1),
-    "독일 2부": ("D2", "Germany", 2),
-
-    # Italy
-    "이탈리아 1부": ("I1", "Italy", 1),
-    "이탈리아 2부": ("I2", "Italy", 2),
-
-    # Spain
-    "스페인 1부": ("SP1", "Spain", 1),
-    "스페인 2부": ("SP2", "Spain", 2),
-
-    # France
-    "프랑스 1부": ("F1", "France", 1),
-    "프랑스 2부": ("F2", "France", 2),
-
-    # Netherlands
-    "네덜란드 1부": ("N1", "Netherlands", 1),
-
-    # Belgium
-    "벨기에 1부": ("B1", "Belgium", 1),
-
-    # Portugal
-    "포르투갈 1부": ("P1", "Portugal", 1),
-
-    # Turkey
-    "터키 1부": ("T1", "Turkey", 1),
-
-    # Greece
-    "그리스 1부": ("G1", "Greece", 1),
-
-    # Worldwide additional leagues
-    "아르헨티나 1부": ("ARG", "Argentina", 1),
-    "오스트리아 1부": ("AUT", "Austria", 1),
-    "브라질 1부": ("BRA", "Brazil", 1),
-    "중국 1부": ("CHN", "China", 1),
-    "덴마크 1부": ("DNK", "Denmark", 1),
-    "핀란드 1부": ("FIN", "Finland", 1),
-    "아일랜드 1부": ("IRL", "Ireland", 1),
-    "일본 1부": ("JPN", "Japan", 1),
-    "멕시코 1부": ("MEX", "Mexico", 1),
-    "노르웨이 1부": ("NOR", "Norway", 1),
-    "폴란드 1부": ("POL", "Poland", 1),
-    "루마니아 1부": ("ROU", "Romania", 1),
-    "러시아 1부": ("RUS", "Russia", 1),
-    "스웨덴 1부": ("SWE", "Sweden", 1),
-    "스위스 1부": ("SWZ", "Switzerland", 1),
-    "미국 MLS": ("USA", "USA", 1)
-}
-
-
-# =========================================================
-# 배당 사이트
-#
-# Closing Odds를 먼저 사용
-# 없으면 일반 Odds 사용
-# =========================================================
-
-BOOKMAKERS = {
-
-    "Bet365": {
-        "normal": ("B365H", "B365D", "B365A"),
-        "closing": ("B365CH", "B365CD", "B365CA")
-    },
-
-    "William Hill": {
-        "normal": ("WHH", "WHD", "WHA"),
-        "closing": ("WHCH", "WHCD", "WHCA")
-    },
-
-    "Bet&Win": {
-        "normal": ("BWH", "BWD", "BWA"),
-        "closing": ("BWCH", "BWCD", "BWCA")
-    },
-
-    "Ladbrokes": {
-        "normal": ("LBH", "LBD", "LBA"),
-        "closing": ("LBCH", "LBCD", "LBCA")
-    },
-
-    "Gamebookers": {
-        "normal": ("GBH", "GBD", "GBA"),
-        "closing": ("GBCH", "GBCD", "GBCA")
-    },
-
-    "Interwetten": {
-        "normal": ("IWH", "IWD", "IWA"),
-        "closing": ("IWCH", "IWCD", "IWCA")
-    },
-
-    "VC Bet": {
-        "normal": ("VCH", "VCD", "VCA"),
-        "closing": ("VCCH", "VCCD", "VCCA")
-    },
-
-    "Stan James": {
-        "normal": ("SJH", "SJD", "SJA"),
-        "closing": ("SJCH", "SJCD", "SJCA")
-    },
-
-    "Pinnacle": {
-        "normal": ("PSH", "PSD", "PSA"),
-        "closing": ("PSCH", "PSCD", "PSCA")
-    },
-
-    "Betfair": {
-        "normal": ("BFH", "BFD", "BFA"),
-        "closing": ("BFCH", "BFCD", "BFCA")
-    }
-}
-
-
-# =========================================================
-# DB 생성
-# =========================================================
-
-def create_database():
-
-    conn = sqlite3.connect(DB_FILE)
-
-    conn.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS matches (
 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            country TEXT,
+            event_key TEXT UNIQUE,
+
+            source TEXT,
+
+            sport TEXT,
+
             league TEXT,
-            division INTEGER,
-            season TEXT,
+
+            country TEXT,
+
             match_date TEXT,
 
             home_team TEXT,
+
             away_team TEXT,
+
+            home_score REAL,
+
+            away_score REAL,
+
+            status TEXT,
 
             result TEXT,
 
+            home_odds REAL,
+
+            draw_odds REAL,
+
+            away_odds REAL,
+
+            over25_odds REAL,
+
+            under25_odds REAL,
+
+            odds_source TEXT,
+
+            odds_updated TEXT,
+
+            raw_json TEXT,
+
             created_at TEXT,
 
-            UNIQUE(
-                league,
-                season,
-                match_date,
-                home_team,
-                away_team
-            )
+            updated_at TEXT
         )
     """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS odds (
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS
+        idx_matches_date
+        ON matches(match_date)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS
+        idx_matches_sport
+        ON matches(sport)
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS
+        idx_matches_teams
+        ON matches(home_team, away_team)
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS
+        source_log (
 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            match_id INTEGER,
+            source TEXT,
 
-            bookmaker TEXT,
+            success INTEGER,
 
-            odds_type TEXT,
+            rows INTEGER,
 
-            home_odds REAL,
-            draw_odds REAL,
-            away_odds REAL,
+            message TEXT,
 
-            UNIQUE(
-                match_id,
-                bookmaker,
-                odds_type
-            )
+            created_at TEXT
         )
     """)
 
-    conn.commit()
-    conn.close()
+    con.commit()
+    con.close()
 
 
-create_database()
+initialize_database()
 
 
-# =========================================================
-# 숫자 변환
-# =========================================================
+# ============================================================
+# UTILITY
+# ============================================================
+
+def now_utc():
+
+    return datetime.now(
+        timezone.utc
+    ).isoformat()
+
+
+def clean_text(value):
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
 
 def safe_float(value):
 
     try:
 
-        if pd.isna(value):
+        if value is None:
             return None
 
-        value = str(value).strip()
+        if isinstance(value, str):
 
-        if value == "":
+            value = (
+                value
+                .replace(",", "")
+                .replace("%", "")
+                .strip()
+            )
+
+        x = float(value)
+
+        if not math.isfinite(x):
             return None
 
-        number = float(value)
-
-        if number <= 1:
-            return None
-
-        return number
+        return x
 
     except Exception:
+
         return None
 
 
-# =========================================================
-# CSV 다운로드
-# =========================================================
+def normalize_team(value):
 
-@st.cache_data(
-    ttl=3600,
-    show_spinner=False
-)
-def download_csv(
-    season_code,
-    league_code
+    value = clean_text(value)
+
+    value = value.lower()
+
+    chars = []
+
+    for c in value:
+
+        if c.isalnum():
+
+            chars.append(c)
+
+    return "".join(chars)
+
+
+def make_event_key(
+    sport,
+    date,
+    home,
+    away,
 ):
 
-    url = (
-        BASE_URL
-        + "/"
-        + season_code
-        + "/"
-        + league_code
-        + ".csv"
-    )
+    raw = "|".join([
+        clean_text(sport).lower(),
+        clean_text(date)[:16],
+        normalize_team(home),
+        normalize_team(away),
+    ])
+
+    return hashlib.sha1(
+        raw.encode("utf-8")
+    ).hexdigest()
+
+
+# ============================================================
+# HTTP
+# ============================================================
+
+@st.cache_data(
+    ttl=60,
+    show_spinner=False,
+)
+def http_get_json(
+    url,
+    params=None,
+):
 
     try:
 
-        response = requests.get(
+        r = requests.get(
             url,
-            timeout=25,
-            headers={
-                "User-Agent":
-                "Mozilla/5.0"
-            }
+            params=params,
+            headers=HEADERS,
+            timeout=REQUEST_TIMEOUT,
         )
 
-        if response.status_code != 200:
-            return None
+        r.raise_for_status()
 
-        if len(response.content) < 200:
-            return None
+        return {
+            "ok": True,
+            "status": r.status_code,
+            "data": r.json(),
+            "error": "",
+        }
 
-        response.encoding = "latin1"
+    except Exception as e:
 
-        text = response.text
+        return {
+            "ok": False,
+            "status": 0,
+            "data": None,
+            "error": str(e),
+        }
 
-        if "HomeTeam" not in text:
-            return None
 
-        return pd.read_csv(
-            StringIO(text)
+# ============================================================
+# SOURCE LOG
+# ============================================================
+
+def log_source(
+    source,
+    success,
+    rows,
+    message="",
+):
+
+    con = get_connection()
+
+    con.execute("""
+        INSERT INTO source_log
+        (
+            source,
+            success,
+            rows,
+            message,
+            created_at
         )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        source,
+        1 if success else 0,
+        rows,
+        message[:1000],
+        now_utc(),
+    ))
 
-    except Exception:
+    con.commit()
+    con.close()
+
+
+# ============================================================
+# GENERIC DATA EXTRACTOR
+# ============================================================
+
+def first_value(
+    obj,
+    keys,
+):
+
+    if not isinstance(obj, dict):
         return None
 
+    lower_map = {
+        str(k).lower(): v
+        for k, v in obj.items()
+    }
 
-# =========================================================
-# 컬럼 존재 여부
-# =========================================================
+    for key in keys:
 
-def columns_exist(
-    df,
-    columns
+        if key in obj:
+            return obj[key]
+
+        if key.lower() in lower_map:
+            return lower_map[key.lower()]
+
+    return None
+
+
+def find_list(
+    data,
 ):
 
-    return all(
-        col in df.columns
-        for col in columns
-    )
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+
+        preferred = [
+            "matches",
+            "games",
+            "events",
+            "data",
+            "results",
+            "fixtures",
+            "items",
+        ]
+
+        for key in preferred:
+
+            value = first_value(
+                data,
+                [key],
+            )
+
+            if isinstance(value, list):
+                return value
+
+        for value in data.values():
+
+            if isinstance(value, list):
+
+                return value
+
+    return []
 
 
-# =========================================================
-# 사이트 검색
-# =========================================================
+# ============================================================
+# SPORT SCORE
+# ============================================================
 
-def detect_bookmakers(df):
-
-    found = {}
-
-    for name, config in BOOKMAKERS.items():
-
-        closing = config["closing"]
-        normal = config["normal"]
-
-        if columns_exist(
-            df,
-            closing
-        ):
-
-            found[name] = {
-                "home": closing[0],
-                "draw": closing[1],
-                "away": closing[2],
-                "type": "마감"
-            }
-
-        elif columns_exist(
-            df,
-            normal
-        ):
-
-            found[name] = {
-                "home": normal[0],
-                "draw": normal[1],
-                "away": normal[2],
-                "type": "일반"
-            }
-
-    return found
-
-
-# =========================================================
-# 데이터 저장
-# =========================================================
-
-def save_dataframe(
-    df,
-    league_name,
-    season_name
+def fetch_sportscore(
+    sport,
+    limit=50,
 ):
 
-    required = [
-        "Date",
-        "HomeTeam",
-        "AwayTeam",
-        "FTR"
-    ]
-
-    if not columns_exist(
-        df,
-        required
-    ):
-        return 0, set()
-
-    country = LEAGUES[
-        league_name
-    ][1]
-
-    division = LEAGUES[
-        league_name
-    ][2]
-
-    bookmakers = detect_bookmakers(
-        df
+    url = (
+        SPORTSCORE_BASE
+        + "/api/widget/matches/"
     )
 
-    conn = sqlite3.connect(
-        DB_FILE
+    result = http_get_json(
+        url,
+        {
+            "sport": sport,
+            "limit": limit,
+            "src": "sports-analyzer-pro",
+        },
     )
 
-    match_count = 0
+    if not result["ok"]:
 
-    site_names = set()
+        log_source(
+            f"SportScore/{sport}",
+            False,
+            0,
+            result["error"],
+        )
 
-    for _, row in df.iterrows():
+        return []
 
-        try:
+    data = result["data"]
 
-            result = str(
-                row["FTR"]
-            ).strip().upper()
+    rows = find_list(data)
 
-            if result not in [
-                "H",
-                "D",
-                "A"
-            ]:
-                continue
+    output = []
 
-            home = str(
-                row["HomeTeam"]
-            ).strip()
+    for item in rows:
 
-            away = str(
-                row["AwayTeam"]
-            ).strip()
-
-            match_date = str(
-                row["Date"]
-            ).strip()
-
-            if (
-                home == ""
-                or away == ""
-                or match_date == ""
-            ):
-                continue
-
-            conn.execute("""
-                INSERT OR IGNORE INTO matches (
-
-                    country,
-                    league,
-                    division,
-                    season,
-                    match_date,
-                    home_team,
-                    away_team,
-                    result,
-                    created_at
-
-                )
-
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                country,
-                league_name,
-                division,
-                season_name,
-                match_date,
-                home,
-                away,
-                result,
-                datetime.now().isoformat()
-            ))
-
-            match = conn.execute("""
-                SELECT id
-                FROM matches
-
-                WHERE league = ?
-                AND season = ?
-                AND match_date = ?
-                AND home_team = ?
-                AND away_team = ?
-            """, (
-                league_name,
-                season_name,
-                match_date,
-                home,
-                away
-            )).fetchone()
-
-            if match is None:
-                continue
-
-            match_id = match[0]
-
-            for site, config in bookmakers.items():
-
-                home_odds = safe_float(
-                    row[config["home"]]
-                )
-
-                draw_odds = safe_float(
-                    row[config["draw"]]
-                )
-
-                away_odds = safe_float(
-                    row[config["away"]]
-                )
-
-                if (
-                    home_odds is None
-                    or draw_odds is None
-                    or away_odds is None
-                ):
-                    continue
-
-                conn.execute("""
-                    INSERT OR REPLACE INTO odds (
-
-                        match_id,
-                        bookmaker,
-                        odds_type,
-                        home_odds,
-                        draw_odds,
-                        away_odds
-
-                    )
-
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    match_id,
-                    site,
-                    config["type"],
-                    home_odds,
-                    draw_odds,
-                    away_odds
-                ))
-
-                site_names.add(site)
-
-            match_count += 1
-
-        except Exception:
+        if not isinstance(item, dict):
             continue
 
-    conn.commit()
-    conn.close()
+        home = first_value(
+            item,
+            [
+                "home",
+                "homeTeam",
+                "home_team",
+            ],
+        )
 
-    return match_count, site_names
+        away = first_value(
+            item,
+            [
+                "away",
+                "awayTeam",
+                "away_team",
+            ],
+        )
 
+        if isinstance(home, dict):
 
-# =========================================================
-# 전체 데이터 업데이트
-# =========================================================
+            home = first_value(
+                home,
+                ["name", "title"],
+            )
 
-def update_all_data():
+        if isinstance(away, dict):
 
-    total_jobs = (
-        len(SEASONS)
-        *
-        len(LEAGUES)
+            away = first_value(
+                away,
+                ["name", "title"],
+            )
+
+        home = clean_text(home)
+        away = clean_text(away)
+
+        if not home or not away:
+            continue
+
+        date = first_value(
+            item,
+            [
+                "startTime",
+                "start_time",
+                "commence_time",
+                "date",
+                "start",
+            ],
+        )
+
+        status = first_value(
+            item,
+            [
+                "status",
+                "state",
+            ],
+        )
+
+        home_score = first_value(
+            item,
+            [
+                "homeScore",
+                "home_score",
+            ],
+        )
+
+        away_score = first_value(
+            item,
+            [
+                "awayScore",
+                "away_score",
+            ],
+        )
+
+        if isinstance(
+            home_score,
+            dict,
+        ):
+
+            home_score = first_value(
+                home_score,
+                ["current", "score", "value"],
+            )
+
+        if isinstance(
+            away_score,
+            dict,
+        ):
+
+            away_score = first_value(
+                away_score,
+                ["current", "score", "value"],
+            )
+
+        league = first_value(
+            item,
+            [
+                "competition",
+                "league",
+                "tournament",
+            ],
+        )
+
+        if isinstance(
+            league,
+            dict,
+        ):
+
+            league = first_value(
+                league,
+                ["name", "title"],
+            )
+
+        output.append({
+
+            "source":
+                "SportScore",
+
+            "sport":
+                sport,
+
+            "league":
+                clean_text(league),
+
+            "country":
+                "",
+
+            "match_date":
+                clean_text(date),
+
+            "home_team":
+                home,
+
+            "away_team":
+                away,
+
+            "home_score":
+                safe_float(home_score),
+
+            "away_score":
+                safe_float(away_score),
+
+            "status":
+                clean_text(status),
+
+            "raw_json":
+                json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+
+        })
+
+    log_source(
+        f"SportScore/{sport}",
+        True,
+        len(output),
     )
 
-    job = 0
-    total_matches = 0
-    all_sites = set()
+    return output
 
-    progress = st.progress(0)
 
-    status = st.empty()
+# ============================================================
+# SPORTSRC V1
+# ============================================================
 
-    for season_name, season_code in SEASONS.items():
+def fetch_sportsrc(
+    sport,
+):
 
-        for league_name in LEAGUES:
+    url = SPORTSRC_BASE
 
-            job += 1
-
-            progress.progress(
-                job / total_jobs
-            )
-
-            status.write(
-                f"📥 {job}/{total_jobs} "
-                f"| {season_name} "
-                f"| {league_name}"
-            )
-
-            league_code = LEAGUES[
-                league_name
-            ][0]
-
-            df = download_csv(
-                season_code,
-                league_code
-            )
-
-            if df is None:
-                continue
-
-            count, sites = save_dataframe(
-                df,
-                league_name,
-                season_name
-            )
-
-            total_matches += count
-
-            all_sites.update(
-                sites
-            )
-
-    progress.progress(1.0)
-
-    status.success(
-        "✅ 데이터 업데이트 완료"
+    result = http_get_json(
+        url,
+        {
+            "data": "matches",
+            "category": sport,
+        },
     )
 
-    return (
-        total_matches,
-        all_sites
+    if not result["ok"]:
+
+        log_source(
+            f"SportSRC/{sport}",
+            False,
+            0,
+            result["error"],
+        )
+
+        return []
+
+    rows = find_list(
+        result["data"]
     )
 
+    output = []
 
-# =========================================================
-# DB 데이터 읽기
-# =========================================================
+    for item in rows:
 
-@st.cache_data(
-    ttl=60
-)
-def load_database():
+        if not isinstance(item, dict):
+            continue
 
-    conn = sqlite3.connect(
-        DB_FILE
+        home = first_value(
+            item,
+            [
+                "home",
+                "homeTeam",
+                "home_team",
+                "team1",
+            ],
+        )
+
+        away = first_value(
+            item,
+            [
+                "away",
+                "awayTeam",
+                "away_team",
+                "team2",
+            ],
+        )
+
+        if isinstance(home, dict):
+
+            home = first_value(
+                home,
+                ["name", "title"],
+            )
+
+        if isinstance(away, dict):
+
+            away = first_value(
+                away,
+                ["name", "title"],
+            )
+
+        home = clean_text(home)
+        away = clean_text(away)
+
+        if not home or not away:
+            continue
+
+        date = first_value(
+            item,
+            [
+                "date",
+                "startTime",
+                "start_time",
+                "timestamp",
+            ],
+        )
+
+        output.append({
+
+            "source":
+                "SportSRC",
+
+            "sport":
+                sport,
+
+            "league":
+                clean_text(
+                    first_value(
+                        item,
+                        [
+                            "league",
+                            "competition",
+                        ],
+                    )
+                ),
+
+            "country":
+                "",
+
+            "match_date":
+                clean_text(date),
+
+            "home_team":
+                home,
+
+            "away_team":
+                away,
+
+            "home_score":
+                safe_float(
+                    first_value(
+                        item,
+                        [
+                            "homeScore",
+                            "home_score",
+                        ],
+                    )
+                ),
+
+            "away_score":
+                safe_float(
+                    first_value(
+                        item,
+                        [
+                            "awayScore",
+                            "away_score",
+                        ],
+                    )
+                ),
+
+            "status":
+                clean_text(
+                    first_value(
+                        item,
+                        [
+                            "status",
+                            "state",
+                        ],
+                    )
+                ),
+
+            "raw_json":
+                json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+
+        })
+
+    log_source(
+        f"SportSRC/{sport}",
+        True,
+        len(output),
     )
 
-    query = """
-        SELECT
+    return output
 
-            m.country,
-            m.league,
-            m.division,
-            m.season,
-            m.match_date,
 
-            m.home_team,
-            m.away_team,
-            m.result,
+# ============================================================
+# 1.ML ODDS
+# ============================================================
 
-            o.bookmaker,
-            o.odds_type,
+def flatten_objects(
+    value,
+):
 
-            o.home_odds,
-            o.draw_odds,
-            o.away_odds
+    if isinstance(value, list):
+        return value
 
-        FROM matches m
+    if isinstance(value, dict):
 
-        INNER JOIN odds o
+        for key in [
+            "games",
+            "events",
+            "matches",
+            "data",
+            "odds",
+        ]:
 
-        ON m.id = o.match_id
-    """
+            x = first_value(
+                value,
+                [key],
+            )
+
+            if isinstance(x, list):
+                return x
+
+        return [value]
+
+    return []
+
+
+def parse_1ml_odds():
+
+    result = http_get_json(
+        ONEML_ODDS_URL
+    )
+
+    if not result["ok"]:
+
+        log_source(
+            "1.ML",
+            False,
+            0,
+            result["error"],
+        )
+
+        return []
+
+    rows = flatten_objects(
+        result["data"]
+    )
+
+    output = []
+
+    for game in rows:
+
+        if not isinstance(game, dict):
+            continue
+
+        home = first_value(
+            game,
+            [
+                "home",
+                "home_team",
+                "homeTeam",
+            ],
+        )
+
+        away = first_value(
+            game,
+            [
+                "away",
+                "away_team",
+                "awayTeam",
+            ],
+        )
+
+        if isinstance(home, dict):
+
+            home = first_value(
+                home,
+                ["name", "title"],
+            )
+
+        if isinstance(away, dict):
+
+            away = first_value(
+                away,
+                ["name", "title"],
+            )
+
+        home = clean_text(home)
+        away = clean_text(away)
+
+        if not home or not away:
+            continue
+
+        date = first_value(
+            game,
+            [
+                "commence_time",
+                "start_time",
+                "startTime",
+                "date",
+            ],
+        )
+
+        output.append({
+
+            "source":
+                "1.ML",
+
+            "sport":
+                clean_text(
+                    first_value(
+                        game,
+                        [
+                            "sport",
+                            "category",
+                        ],
+                    )
+                ),
+
+            "league":
+                clean_text(
+                    first_value(
+                        game,
+                        [
+                            "league",
+                            "competition",
+                        ],
+                    )
+                ),
+
+            "match_date":
+                clean_text(date),
+
+            "home_team":
+                home,
+
+            "away_team":
+                away,
+
+            "raw_json":
+                json.dumps(
+                    game,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+
+        })
+
+    log_source(
+        "1.ML",
+        True,
+        len(output),
+    )
+
+    return output
+
+
+# ============================================================
+# ODDS EXTRACTION
+# ============================================================
+
+def extract_odds(
+    raw,
+):
+
+    if not isinstance(raw, dict):
+        return []
+
+    found = []
+
+    def walk(
+        obj,
+        bookmaker="",
+    ):
+
+        if isinstance(obj, dict):
+
+            name = first_value(
+                obj,
+                [
+                    "bookmaker",
+                    "book",
+                    "sportsbook",
+                    "site",
+                    "name",
+                ],
+            )
+
+            if name:
+                bookmaker = clean_text(name)
+
+            keys = {
+                str(k).lower(): v
+                for k, v in obj.items()
+            }
+
+            home = None
+            draw = None
+            away = None
+
+            for k, v in keys.items():
+
+                if k in [
+                    "home",
+                    "hometeam",
+                    "homeodds",
+                    "home_odds",
+                ]:
+                    home = safe_float(v)
+
+                elif k in [
+                    "draw",
+                    "drawodds",
+                    "draw_odds",
+                ]:
+                    draw = safe_float(v)
+
+                elif k in [
+                    "away",
+                    "awayodds",
+                    "away_odds",
+                ]:
+                    away = safe_float(v)
+
+            if (
+                home
+                and draw
+                and away
+                and home > 1
+                and draw > 1
+                and away > 1
+            ):
+
+                found.append({
+
+                    "bookmaker":
+                        bookmaker,
+
+                    "home":
+                        home,
+
+                    "draw":
+                        draw,
+
+                    "away":
+                        away,
+
+                })
+
+            for v in obj.values():
+
+                walk(
+                    v,
+                    bookmaker,
+                )
+
+        elif isinstance(obj, list):
+
+            for v in obj:
+
+                walk(
+                    v,
+                    bookmaker,
+                )
+
+    walk(raw)
+
+    unique = []
+
+    seen = set()
+
+    for x in found:
+
+        key = (
+            x["bookmaker"],
+            x["home"],
+            x["draw"],
+            x["away"],
+        )
+
+        if key not in seen:
+
+            seen.add(key)
+
+            unique.append(x)
+
+    return unique
+
+
+# ============================================================
+# IMPLIED PROBABILITY
+# ============================================================
+
+def no_vig_probability(
+    home,
+    draw,
+    away,
+):
+
+    vals = [
+        safe_float(home),
+        safe_float(draw),
+        safe_float(away),
+    ]
+
+    inv = []
+
+    for x in vals:
+
+        if x is None or x <= 1:
+            inv.append(0)
+
+        else:
+            inv.append(1 / x)
+
+    total = sum(inv)
+
+    if total <= 0:
+        return [0, 0, 0]
+
+    return [
+        x / total
+        for x in inv
+    ]
+
+
+# ============================================================
+# DATABASE UPSERT
+# ============================================================
+
+def save_match(
+    match,
+):
+
+    sport = clean_text(
+        match.get("sport")
+    )
+
+    date = clean_text(
+        match.get("match_date")
+    )
+
+    home = clean_text(
+        match.get("home_team")
+    )
+
+    away = clean_text(
+        match.get("away_team")
+    )
+
+    if not home or not away:
+        return False
+
+    event_key = make_event_key(
+        sport,
+        date,
+        home,
+        away,
+    )
+
+    con = get_connection()
+
+    existing = con.execute(
+        """
+        SELECT id
+        FROM matches
+        WHERE event_key = ?
+        """,
+        (event_key,),
+    ).fetchone()
+
+    values = (
+
+        match.get("source", ""),
+
+        sport,
+
+        match.get("league", ""),
+
+        match.get("country", ""),
+
+        date,
+
+        home,
+
+        away,
+
+        match.get("home_score"),
+
+        match.get("away_score"),
+
+        match.get("status", ""),
+
+        match.get("result"),
+
+        match.get("home_odds"),
+
+        match.get("draw_odds"),
+
+        match.get("away_odds"),
+
+        match.get("over25_odds"),
+
+        match.get("under25_odds"),
+
+        match.get("odds_source", ""),
+
+        match.get("odds_updated", ""),
+
+        match.get("raw_json", ""),
+
+        now_utc(),
+
+        now_utc(),
+    )
+
+    if existing:
+
+        con.execute(
+            """
+            UPDATE matches
+            SET
+                source = ?,
+                sport = ?,
+                league = ?,
+                country = ?,
+                match_date = ?,
+                home_team = ?,
+                away_team = ?,
+                home_score = COALESCE(?, home_score),
+                away_score = COALESCE(?, away_score),
+                status = ?,
+                result = COALESCE(?, result),
+                home_odds = COALESCE(?, home_odds),
+                draw_odds = COALESCE(?, draw_odds),
+                away_odds = COALESCE(?, away_odds),
+                over25_odds = COALESCE(?, over25_odds),
+                under25_odds = COALESCE(?, under25_odds),
+                odds_source = ?,
+                odds_updated = ?,
+                raw_json = ?,
+                updated_at = ?
+            WHERE event_key = ?
+            """,
+            values + (event_key,),
+        )
+
+    else:
+
+        con.execute(
+            """
+            INSERT INTO matches
+            (
+                event_key,
+                source,
+                sport,
+                league,
+                country,
+                match_date,
+                home_team,
+                away_team,
+                home_score,
+                away_score,
+                status,
+                result,
+                home_odds,
+                draw_odds,
+                away_odds,
+                over25_odds,
+                under25_odds,
+                odds_source,
+                odds_updated,
+                raw_json,
+                created_at,
+                updated_at
+            )
+            VALUES
+            (
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?,
+                ?
+            )
+            """,
+            (event_key,) + values,
+        )
+
+    con.commit()
+    con.close()
+
+    return True
+
+
+# ============================================================
+# RESULT CALCULATION
+# ============================================================
+
+def calculate_result(
+    home_score,
+    away_score,
+):
+
+    h = safe_float(
+        home_score
+    )
+
+    a = safe_float(
+        away_score
+    )
+
+    if h is None or a is None:
+        return None
+
+    if h > a:
+        return "H"
+
+    if h < a:
+        return "A"
+
+    return "D"
+
+
+# ============================================================
+# LOAD DB
+# ============================================================
+
+def load_matches():
+
+    con = get_connection()
 
     df = pd.read_sql_query(
-        query,
-        conn
+        """
+        SELECT *
+        FROM matches
+        ORDER BY match_date
+        """,
+        con,
     )
 
-    conn.close()
+    con.close()
+
+    if df.empty:
+        return df
+
+    df["match_date"] = pd.to_datetime(
+        df["match_date"],
+        errors="coerce",
+        utc=True,
+    )
+
+    df["result"] = df.apply(
+        lambda x:
+        x["result"]
+        if clean_text(x["result"])
+        else calculate_result(
+            x["home_score"],
+            x["away_score"],
+        ),
+        axis=1,
+    )
 
     return df
 
 
-# =========================================================
-# 유사 배당 분석
-# =========================================================
+# ============================================================
+# IMPORT CSV
+# ============================================================
 
-def analyze_bookmaker(
+COLUMN_MAP = {
+
+    "Date": "match_date",
+    "date": "match_date",
+
+    "HomeTeam": "home_team",
+    "home": "home_team",
+    "home_team": "home_team",
+
+    "AwayTeam": "away_team",
+    "away": "away_team",
+    "away_team": "away_team",
+
+    "FTHG": "home_score",
+    "FTAG": "away_score",
+    "FTR": "result",
+
+    "B365H": "home_odds",
+    "B365D": "draw_odds",
+    "B365A": "away_odds",
+
+    "AvgH": "home_odds",
+    "AvgD": "draw_odds",
+    "AvgA": "away_odds",
+
+    "Over25": "over25_odds",
+    "Under25": "under25_odds",
+
+    "B365>2.5": "over25_odds",
+    "B365<2.5": "under25_odds",
+
+}
+
+
+def normalize_dataframe(
     df,
-    bookmaker,
-    home_odds,
-    draw_odds,
-    away_odds,
-    tolerance
+    source,
 ):
 
-    data = df[
-        df["bookmaker"]
-        ==
-        bookmaker
-    ].copy()
+    rename = {}
 
-    if data.empty:
+    for col in df.columns:
+
+        if col in COLUMN_MAP:
+
+            rename[col] = COLUMN_MAP[col]
+
+    df = df.rename(
+        columns=rename
+    )
+
+    required = [
+        "match_date",
+        "home_team",
+        "away_team",
+    ]
+
+    for col in required:
+
+        if col not in df.columns:
+            df[col] = ""
+
+    for col in [
+        "home_score",
+        "away_score",
+        "home_odds",
+        "draw_odds",
+        "away_odds",
+        "over25_odds",
+        "under25_odds",
+    ]:
+
+        if col not in df.columns:
+            df[col] = np.nan
+
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce",
+        )
+
+    df["match_date"] = pd.to_datetime(
+        df["match_date"],
+        errors="coerce",
+    )
+
+    if "result" not in df.columns:
+
+        df["result"] = df.apply(
+            lambda x:
+            calculate_result(
+                x["home_score"],
+                x["away_score"],
+            ),
+            axis=1,
+        )
+
+    return df
+
+
+def import_dataframe(
+    df,
+    source,
+):
+
+    df = normalize_dataframe(
+        df,
+        source,
+    )
+
+    count = 0
+
+    for _, row in df.iterrows():
+
+        if not clean_text(
+            row["home_team"]
+        ):
+            continue
+
+        if not clean_text(
+            row["away_team"]
+        ):
+            continue
+
+        match = {
+
+            "source":
+                source,
+
+            "sport":
+                "Football",
+
+            "league":
+                "",
+
+            "country":
+                "",
+
+            "match_date":
+                str(
+                    row["match_date"]
+                ),
+
+            "home_team":
+                row["home_team"],
+
+            "away_team":
+                row["away_team"],
+
+            "home_score":
+                safe_float(
+                    row["home_score"]
+                ),
+
+            "away_score":
+                safe_float(
+                    row["away_score"]
+                ),
+
+            "status":
+                "finished",
+
+            "result":
+                row["result"],
+
+            "home_odds":
+                safe_float(
+                    row["home_odds"]
+                ),
+
+            "draw_odds":
+                safe_float(
+                    row["draw_odds"]
+                ),
+
+            "away_odds":
+                safe_float(
+                    row["away_odds"]
+                ),
+
+            "over25_odds":
+                safe_float(
+                    row["over25_odds"]
+                ),
+
+            "under25_odds":
+                safe_float(
+                    row["under25_odds"]
+                ),
+
+            "raw_json":
+                "",
+
+        }
+
+        if save_match(
+            match
+        ):
+            count += 1
+
+    return count
+
+
+# ============================================================
+# MARKET PROBABILITY
+# ============================================================
+
+def market_probabilities(
+    h,
+    d,
+    a,
+):
+
+    return no_vig_probability(
+        h,
+        d,
+        a,
+    )
+
+
+# ============================================================
+# ODDS BUCKET
+# ============================================================
+
+def odds_bucket(
+    odds,
+):
+
+    x = safe_float(
+        odds
+    )
+
+    if x is None:
+        return "N/A"
+
+    if x < 1.30:
+        return "1.01-1.29"
+
+    if x < 1.40:
+        return "1.30-1.39"
+
+    if x < 1.50:
+        return "1.40-1.49"
+
+    if x < 1.60:
+        return "1.50-1.59"
+
+    if x < 1.70:
+        return "1.60-1.69"
+
+    if x < 1.80:
+        return "1.70-1.79"
+
+    if x < 2.00:
+        return "1.80-1.99"
+
+    if x < 2.50:
+        return "2.00-2.49"
+
+    return "2.50+"
+
+
+# ============================================================
+# VALUE CALCULATION
+# ============================================================
+
+def expected_value(
+    probability,
+    odds,
+):
+
+    p = safe_float(
+        probability
+    )
+
+    o = safe_float(
+        odds
+    )
+
+    if p is None or o is None:
         return None
 
-    data = data.dropna(
-        subset=[
-            "home_odds",
-            "draw_odds",
-            "away_odds",
-            "result"
+    if o <= 1:
+        return None
+
+    return (
+        p * o
+    ) - 1
+
+
+# ============================================================
+# BACKTEST
+# ============================================================
+
+def run_backtest(
+    df,
+    min_odds,
+    max_odds,
+    min_probability,
+):
+
+    if df.empty:
+        return pd.DataFrame()
+
+    data = df.copy()
+
+    data = data[
+        data["home_odds"].notna()
+        &
+        data["draw_odds"].notna()
+        &
+        data["away_odds"].notna()
+    ]
+
+    data = data[
+        data["result"].isin(
+            ["H", "D", "A"]
+        )
+    ]
+
+    rows = []
+
+    for _, r in data.iterrows():
+
+        probs = market_probabilities(
+            r["home_odds"],
+            r["draw_odds"],
+            r["away_odds"],
+        )
+
+        labels = [
+            "H",
+            "D",
+            "A",
         ]
-    )
 
-    if data.empty:
-        return None
+        odds = [
+            r["home_odds"],
+            r["draw_odds"],
+            r["away_odds"],
+        ]
 
-    data["diff_home"] = (
-        data["home_odds"]
-        -
-        home_odds
-    ).abs()
+        idx = int(
+            np.argmax(probs)
+        )
 
-    data["diff_draw"] = (
-        data["draw_odds"]
-        -
-        draw_odds
-    ).abs()
+        prediction = labels[idx]
 
-    data["diff_away"] = (
-        data["away_odds"]
-        -
-        away_odds
-    ).abs()
+        probability = probs[idx]
 
-    data["distance"] = (
-        data["diff_home"]
-        +
-        data["diff_draw"]
-        +
-        data["diff_away"]
-    )
+        selected_odds = safe_float(
+            odds[idx]
+        )
 
-    similar = data[
-        (data["diff_home"] <= tolerance)
-        &
-        (data["diff_draw"] <= tolerance)
-        &
-        (data["diff_away"] <= tolerance)
-    ].copy()
+        if selected_odds is None:
+            continue
 
-    if similar.empty:
-        return None
+        if not (
+            min_odds
+            <= selected_odds
+            <= max_odds
+        ):
+            continue
 
-    total = len(similar)
+        if probability < min_probability:
+            continue
 
-    win = int(
-        (
-            similar["result"]
+        hit = (
+            prediction
             ==
-            "H"
-        ).sum()
+            r["result"]
+        )
+
+        profit = (
+            selected_odds - 1
+            if hit
+            else -1
+        )
+
+        ev = expected_value(
+            probability,
+            selected_odds,
+        )
+
+        rows.append({
+
+            "date":
+                r["match_date"],
+
+            "sport":
+                r["sport"],
+
+            "league":
+                r["league"],
+
+            "home":
+                r["home_team"],
+
+            "away":
+                r["away_team"],
+
+            "prediction":
+                prediction,
+
+            "probability":
+                probability,
+
+            "odds":
+                selected_odds,
+
+            "EV":
+                ev,
+
+            "result":
+                r["result"],
+
+            "hit":
+                hit,
+
+            "profit":
+                profit,
+
+        })
+
+    result = pd.DataFrame(
+        rows
     )
 
-    draw = int(
-        (
-            similar["result"]
-            ==
-            "D"
-        ).sum()
+    if result.empty:
+        return result
+
+    result = result.sort_values(
+        "date"
     )
 
-    loss = int(
-        (
-            similar["result"]
-            ==
-            "A"
-        ).sum()
+    result["cum_profit"] = (
+        result["profit"]
+        .cumsum()
+    )
+
+    result["peak"] = (
+        result["cum_profit"]
+        .cummax()
+    )
+
+    result["drawdown"] = (
+        result["cum_profit"]
+        -
+        result["peak"]
+    )
+
+    result["ROI"] = (
+        result["cum_profit"]
+        /
+        np.arange(
+            1,
+            len(result) + 1
+        )
+        * 100
+    )
+
+    return result
+
+
+# ============================================================
+# METRICS
+# ============================================================
+
+def metrics(
+    bt,
+):
+
+    if bt.empty:
+
+        return {
+
+            "games": 0,
+            "hits": 0,
+            "hit_rate": 0,
+            "profit": 0,
+            "roi": 0,
+            "max_drawdown": 0,
+            "avg_odds": 0,
+            "avg_ev": 0,
+
+        }
+
+    games = len(bt)
+
+    hits = int(
+        bt["hit"].sum()
+    )
+
+    profit = float(
+        bt["profit"].sum()
+    )
+
+    roi = (
+        profit
+        /
+        games
+        *
+        100
+    )
+
+    max_drawdown = abs(
+        float(
+            bt["drawdown"].min()
+        )
+    )
+
+    avg_odds = float(
+        bt["odds"].mean()
+    )
+
+    avg_ev = float(
+        bt["EV"].mean()
     )
 
     return {
-        "total": total,
-        "win": win,
-        "draw": draw,
-        "loss": loss,
-        "win_pct": win / total * 100,
-        "draw_pct": draw / total * 100,
-        "loss_pct": loss / total * 100,
-        "data": similar.sort_values(
-            "distance"
-        )
+
+        "games":
+            games,
+
+        "hits":
+            hits,
+
+        "hit_rate":
+            hits / games * 100,
+
+        "profit":
+            profit,
+
+        "roi":
+            roi,
+
+        "max_drawdown":
+            max_drawdown,
+
+        "avg_odds":
+            avg_odds,
+
+        "avg_ev":
+            avg_ev,
+
     }
 
 
-# =========================================================
-# 화면
-# =========================================================
+# ============================================================
+# STREAK
+# ============================================================
 
-st.title(
-    "⚽ 해외배당 승무패 분석"
-)
-
-st.caption(
-    "2020/21 ~ 2026/27 · 마감배당 우선 · 해외사이트별 분석"
-)
-
-
-# =========================================================
-# DB 업데이트
-# =========================================================
-
-st.subheader(
-    "📚 데이터 관리"
-)
-
-if st.button(
-    "🔄 2020~2026 전체 데이터 업데이트",
-    use_container_width=True
+def streak_stats(
+    bt,
 ):
 
+    if bt.empty:
+        return 0, 0
+
+    max_win = 0
+    max_loss = 0
+
+    win = 0
+    loss = 0
+
+    for hit in bt["hit"]:
+
+        if hit:
+
+            win += 1
+            loss = 0
+
+        else:
+
+            loss += 1
+            win = 0
+
+        max_win = max(
+            max_win,
+            win,
+        )
+
+        max_loss = max(
+            max_loss,
+            loss,
+        )
+
+    return max_win, max_loss
+
+
+# ============================================================
+# TIME SPLIT
+# ============================================================
+
+def time_split(
+    df,
+):
+
+    if df.empty:
+
+        return (
+            df,
+            df,
+            df,
+        )
+
+    x = df.copy()
+
+    x["year"] = (
+        pd.to_datetime(
+            x["match_date"],
+            errors="coerce",
+        )
+        .dt.year
+    )
+
+    train = x[
+        x["year"] <= 2024
+    ]
+
+    validation = x[
+        x["year"] == 2025
+    ]
+
+    test = x[
+        x["year"] >= 2026
+    ]
+
+    return (
+        train,
+        validation,
+        test,
+    )
+
+
+# ============================================================
+# VALUE FILTER
+# ============================================================
+
+def value_filter(
+    bt,
+    min_ev,
+):
+
+    if bt.empty:
+        return bt
+
+    return bt[
+        bt["EV"]
+        >= min_ev
+    ].copy()
+
+
+# ============================================================
+# SOURCE STATUS
+# ============================================================
+
+def source_status():
+
+    con = get_connection()
+
+    df = pd.read_sql_query(
+        """
+        SELECT
+            source,
+            MAX(created_at) AS last_time,
+            SUM(success) AS successes,
+            COUNT(*) AS calls,
+            SUM(rows) AS rows
+        FROM source_log
+        GROUP BY source
+        ORDER BY source
+        """,
+        con,
+    )
+
+    con.close()
+
+    return df
+
+
+# ============================================================
+# AUTO COLLECT
+# ============================================================
+
+def collect_all(
+    sports,
+):
+
+    total = 0
+
+    for sport in sports:
+
+        rows = fetch_sportscore(
+            sport,
+            50,
+        )
+
+        for match in rows:
+
+            match["result"] = (
+                calculate_result(
+                    match.get(
+                        "home_score"
+                    ),
+                    match.get(
+                        "away_score"
+                    ),
+                )
+            )
+
+            if save_match(
+                match
+            ):
+
+                total += 1
+
+    # SportSRC is supplemental.
+    for sport in sports:
+
+        rows = fetch_sportsrc(
+            sport
+        )
+
+        for match in rows:
+
+            match["result"] = (
+                calculate_result(
+                    match.get(
+                        "home_score"
+                    ),
+                    match.get(
+                        "away_score"
+                    ),
+                )
+            )
+
+            save_match(
+                match
+            )
+
+    return total
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+st.sidebar.title(
+    "⚙️ 설정"
+)
+
+st.sidebar.markdown(
+    """
+**API 키 입력 불필요**
+
+공개 무료 데이터만 사용합니다.
+"""
+)
+
+selected_sports = st.sidebar.multiselect(
+    "자동수집 종목",
+    SPORTSCORE_SPORTS,
+    default=SPORTSCORE_SPORTS,
+)
+
+refresh = st.sidebar.button(
+    "🔄 데이터 새로 수집"
+)
+
+if refresh:
+
     with st.spinner(
-        "전세계 축구 데이터를 수집하고 있습니다..."
+        "공개 데이터 수집 중..."
     ):
 
-        total, sites = update_all_data()
-
-    st.cache_data.clear()
-
-    st.success(
-        f"완료! 처리 경기: {total:,}건"
-    )
-
-    st.info(
-        "사용 가능한 해외사이트: "
-        + ", ".join(
-            sorted(sites)
+        count = collect_all(
+            selected_sports
         )
-    )
 
-    st.rerun()
-
-
-# =========================================================
-# DB 읽기
-# =========================================================
-
-try:
-
-    db = load_database()
-
-except Exception:
-
-    db = pd.DataFrame()
-
-
-# =========================================================
-# DB가 비어있는 경우
-# =========================================================
-
-if db.empty:
-
-    st.warning(
-        "⚠️ historical_odds.db에 데이터가 없습니다."
-    )
-
-    st.info(
-        "위의 "
-        "'2020~2026 전체 데이터 업데이트' "
-        "버튼을 한 번 눌러주세요."
-    )
-
-    st.stop()
-
-
-# =========================================================
-# 데이터 현황
-# =========================================================
-
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-
-    st.metric(
-        "배당 데이터",
-        f"{len(db):,}"
-    )
-
-with c2:
-
-    st.metric(
-        "해외사이트",
-        db["bookmaker"].nunique()
-    )
-
-with c3:
-
-    st.metric(
-        "리그",
-        db["league"].nunique()
-    )
-
-with c4:
-
-    st.metric(
-        "시즌",
-        db["season"].nunique()
+    st.sidebar.success(
+        f"{count:,}건 처리 완료"
     )
 
 
-# =========================================================
-# 배당 입력
-# =========================================================
+# ============================================================
+# CSV UPLOAD
+# ============================================================
 
-st.divider()
+st.sidebar.divider()
 
-st.header(
-    "🎯 현재 경기 배당 입력"
+st.sidebar.subheader(
+    "📂 과거 데이터"
 )
 
-st.write(
-    "팀 이름은 입력하지 않습니다."
+files = st.sidebar.file_uploader(
+    "CSV 추가",
+    type=["csv"],
+    accept_multiple_files=True,
 )
 
-st.write(
-    "승·무·패 배당만 입력하면 자동으로 "
-    "2020/21~2026/27 과거 경기와 비교합니다."
+if files:
+
+    for file in files:
+
+        try:
+
+            try:
+
+                temp = pd.read_csv(
+                    file,
+                    encoding="utf-8",
+                )
+
+            except:
+
+                file.seek(0)
+
+                temp = pd.read_csv(
+                    file,
+                    encoding="latin1",
+                )
+
+            inserted = import_dataframe(
+                temp,
+                file.name,
+            )
+
+            st.sidebar.success(
+                f"{file.name}: "
+                f"{inserted:,}건"
+            )
+
+        except Exception as e:
+
+            st.sidebar.error(
+                f"{file.name}: {e}"
+            )
+
+
+# ============================================================
+# ANALYSIS SETTINGS
+# ============================================================
+
+st.sidebar.divider()
+
+st.sidebar.subheader(
+    "📊 백테스트"
+)
+
+min_odds = st.sidebar.number_input(
+    "최소 배당",
+    min_value=1.01,
+    max_value=20.0,
+    value=1.40,
+    step=0.01,
+)
+
+max_odds = st.sidebar.number_input(
+    "최대 배당",
+    min_value=1.02,
+    max_value=50.0,
+    value=2.50,
+    step=0.01,
+)
+
+min_probability = st.sidebar.slider(
+    "최소 시장확률",
+    0.30,
+    0.90,
+    0.55,
+    0.01,
+)
+
+min_ev = st.sidebar.slider(
+    "최소 EV",
+    -0.10,
+    0.30,
+    0.03,
+    0.01,
+)
+
+min_sample = st.sidebar.number_input(
+    "최소 표본",
+    10,
+    10000,
+    300,
+    10,
 )
 
 
-col1, col2, col3 = st.columns(3)
+# ============================================================
+# MAIN
+# ============================================================
 
-
-with col1:
-
-    home_odds = st.number_input(
-        "🟢 승 배당",
-        min_value=1.01,
-        max_value=100.0,
-        value=1.85,
-        step=0.01
-    )
-
-
-with col2:
-
-    draw_odds = st.number_input(
-        "🔵 무 배당",
-        min_value=1.01,
-        max_value=100.0,
-        value=3.60,
-        step=0.01
-    )
-
-
-with col3:
-
-    away_odds = st.number_input(
-        "🔴 패 배당",
-        min_value=1.01,
-        max_value=100.0,
-        value=4.20,
-        step=0.01
-    )
-
-
-# =========================================================
-# 허용범위
-# =========================================================
-
-tolerance = st.slider(
-    "유사배당 허용범위",
-    min_value=0.05,
-    max_value=0.50,
-    value=0.20,
-    step=0.05
+st.title(
+    "🏆 SPORTS ANALYZER PRO"
 )
-
 
 st.caption(
-    f"입력 배당: "
-    f"{home_odds:.2f} / "
-    f"{draw_odds:.2f} / "
-    f"{away_odds:.2f}"
+    "무료 공개 데이터 · 경기결과 · 배당 · "
+    "백테스트 · ROI · Value 분석"
 )
 
 
-# =========================================================
-# 사이트 목록
-# =========================================================
-
-bookmakers = sorted(
-    db["bookmaker"]
-    .dropna()
-    .unique()
-    .tolist()
-)
+df = load_matches()
 
 
-# =========================================================
-# 분석
-# =========================================================
+# ============================================================
+# TOP METRICS
+# ============================================================
 
-results = {}
-
-for bookmaker in bookmakers:
-
-    result = analyze_bookmaker(
-        db,
-        bookmaker,
-        home_odds,
-        draw_odds,
-        away_odds,
-        tolerance
-    )
-
-    if result is not None:
-
-        results[
-            bookmaker
-        ] = result
-
-
-# =========================================================
-# 결과
-# =========================================================
-
-st.divider()
-
-st.header(
-    "📊 해외사이트별 전체 결과"
-)
-
-
-if not results:
+if df.empty:
 
     st.warning(
-        "현재 배당과 유사한 과거 경기가 없습니다."
-    )
-
-    st.info(
-        "유사배당 허용범위를 조금 높여보세요."
+        "아직 데이터가 없습니다. "
+        "왼쪽의 '데이터 새로 수집'을 누르거나 "
+        "CSV 파일을 업로드하세요."
     )
 
 else:
 
-    # =====================================================
-    # 전체 합계
-    # =====================================================
+    c1, c2, c3, c4, c5 = st.columns(5)
 
-    total_sample = sum(
-        r["total"]
-        for r in results.values()
+    c1.metric(
+        "전체 경기",
+        f"{len(df):,}"
     )
 
-    total_win = sum(
-        r["win"]
-        for r in results.values()
+    c2.metric(
+        "종목",
+        df["sport"]
+        .nunique()
     )
 
-    total_draw = sum(
-        r["draw"]
-        for r in results.values()
+    c3.metric(
+        "리그",
+        df["league"]
+        .replace("", np.nan)
+        .nunique()
     )
 
-    total_loss = sum(
-        r["loss"]
-        for r in results.values()
+    c4.metric(
+        "결과 보유",
+        f"{df['result'].notna().sum():,}"
     )
 
-    overall_win = (
-        total_win
-        /
-        total_sample
-        *
-        100
-    )
-
-    overall_draw = (
-        total_draw
-        /
-        total_sample
-        *
-        100
-    )
-
-    overall_loss = (
-        total_loss
-        /
-        total_sample
-        *
-        100
+    c5.metric(
+        "배당 보유",
+        f"{df['home_odds'].notna().sum():,}"
     )
 
 
-    # =====================================================
-    # 전체 결과
-    # =====================================================
+# ============================================================
+# TABS
+# ============================================================
+
+tabs = st.tabs([
+    "🔥 오늘 분석",
+    "📊 백테스트",
+    "💰 ROI",
+    "📈 배당통계",
+    "🏆 종목/리그",
+    "🗄️ 데이터",
+    "⚙️ 출처",
+])
+
+
+# ============================================================
+# TAB 1
+# ============================================================
+
+with tabs[0]:
 
     st.subheader(
-        "🏆 전체 사이트 종합"
+        "🔥 현재 데이터 분석"
     )
 
-    overall_col1, overall_col2, overall_col3, overall_col4 = (
-        st.columns(4)
-    )
+    if df.empty:
 
-    with overall_col1:
-
-        st.metric(
-            "승",
-            f"{overall_win:.2f}%"
+        st.info(
+            "경기 데이터가 없습니다."
         )
 
-    with overall_col2:
+    else:
 
-        st.metric(
-            "무",
-            f"{overall_draw:.2f}%"
-        )
+        current = df.copy()
 
-    with overall_col3:
-
-        st.metric(
-            "패",
-            f"{overall_loss:.2f}%"
-        )
-
-    with overall_col4:
-
-        st.metric(
-            "총 표본",
-            f"{total_sample:,}"
-        )
-
-
-    # =====================================================
-    # 가장 높은 결과
-    # =====================================================
-
-    overall_values = {
-
-        "승": overall_win,
-
-        "무": overall_draw,
-
-        "패": overall_loss
-    }
-
-    best_result = max(
-        overall_values,
-        key=overall_values.get
-    )
-
-    best_value = (
-        overall_values[
-            best_result
-        ]
-    )
-
-    st.success(
-        f"🔥 전체 사이트에서 가장 많이 나온 결과: "
-        f"{best_result} "
-        f"({best_value:.2f}%)"
-    )
-
-
-    # =====================================================
-    # 사이트별 결과
-    # =====================================================
-
-    st.subheader(
-        "🌍 사이트별 결과"
-    )
-
-    table_rows = []
-
-    for bookmaker, r in results.items():
-
-        table_rows.append({
-
-            "사이트":
-                bookmaker,
-
-            "표본":
-                r["total"],
-
-            "승":
-                f"{r['win_pct']:.2f}%",
-
-            "무":
-                f"{r['draw_pct']:.2f}%",
-
-            "패":
-                f"{r['loss_pct']:.2f}%",
-
-            "최다결과":
-                max(
-                    {
-                        "승": r["win_pct"],
-                        "무": r["draw_pct"],
-                        "패": r["loss_pct"]
-                    },
-                    key={
-                        "승": r["win_pct"],
-                        "무": r["draw_pct"],
-                        "패": r["loss_pct"]
-                    }.get
-                )
-
-        })
-
-
-    result_table = pd.DataFrame(
-        table_rows
-    )
-
-
-    result_table = result_table.sort_values(
-        "표본",
-        ascending=False
-    )
-
-
-    # =====================================================
-    # 핵심: 사이트별 전체 결과를 한 화면
-    # =====================================================
-
-    st.dataframe(
-        result_table,
-        use_container_width=True,
-        hide_index=True,
-        height=500
-    )
-
-
-    # =====================================================
-    # 사이트별 상세 카드
-    # =====================================================
-
-    st.subheader(
-        "📌 사이트별 상세"
-    )
-
-    # 3개씩 한 줄
-    site_list = list(
-        results.keys()
-    )
-
-    for i in range(
-        0,
-        len(site_list),
-        3
-    ):
-
-        row_sites = site_list[
-            i:i + 3
+        current = current[
+            current[
+                "home_odds"
+            ].notna()
+            &
+            current[
+                "draw_odds"
+            ].notna()
+            &
+            current[
+                "away_odds"
+            ].notna()
         ]
 
-        cols = st.columns(3)
+        rows = []
 
-        for col, bookmaker in zip(
-            cols,
-            row_sites
-        ):
+        for _, r in current.iterrows():
 
-            r = results[
-                bookmaker
+            probs = market_probabilities(
+                r["home_odds"],
+                r["draw_odds"],
+                r["away_odds"],
+            )
+
+            labels = [
+                "홈승",
+                "무",
+                "원정승",
             ]
 
-            with col:
+            odds = [
+                r["home_odds"],
+                r["draw_odds"],
+                r["away_odds"],
+            ]
 
-                st.markdown(
-                    f"### {bookmaker}"
-                )
+            idx = int(
+                np.argmax(probs)
+            )
 
-                st.metric(
-                    "표본",
-                    f"{r['total']:,}건"
-                )
+            p = probs[idx]
 
-                st.write(
-                    f"🟢 승 **{r['win_pct']:.2f}%**"
-                )
+            o = safe_float(
+                odds[idx]
+            )
 
-                st.write(
-                    f"🔵 무 **{r['draw_pct']:.2f}%**"
-                )
+            ev = expected_value(
+                p,
+                o,
+            )
 
-                st.write(
-                    f"🔴 패 **{r['loss_pct']:.2f}%**"
-                )
+            rows.append({
+
+                "시간":
+                    r["match_date"],
+
+                "종목":
+                    r["sport"],
+
+                "리그":
+                    r["league"],
+
+                "경기":
+                    f"{r['home_team']} "
+                    f"vs "
+                    f"{r['away_team']}",
+
+                "추천":
+                    labels[idx],
+
+                "확률":
+                    p,
+
+                "배당":
+                    o,
+
+                "EV":
+                    ev,
+
+            })
+
+        analysis = pd.DataFrame(
+            rows
+        )
+
+        if not analysis.empty:
+
+            analysis = analysis[
+                analysis["EV"]
+                >= min_ev
+            ]
+
+            analysis = analysis.sort_values(
+                [
+                    "EV",
+                    "확률",
+                ],
+                ascending=False,
+            )
+
+            analysis["판정"] = np.where(
+                analysis["EV"] > 0.10,
+                "🔥 강한 VALUE",
+                np.where(
+                    analysis["EV"] > 0.03,
+                    "🟢 VALUE",
+                    "⚪ 일반",
+                ),
+            )
+
+            analysis["확률"] *= 100
+            analysis["EV"] *= 100
+
+            st.dataframe(
+                analysis.head(100)
+                .style.format({
+                    "확률":
+                        "{:.2f}%",
+                    "배당":
+                        "{:.2f}",
+                    "EV":
+                        "{:+.2f}%",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        else:
+
+            st.info(
+                "현재 조건을 만족하는 VALUE 경기가 없습니다."
+            )
 
 
-# =========================================================
-# 과거 실제 경기 상세
-# =========================================================
+# ============================================================
+# TAB 2 BACKTEST
+# ============================================================
 
-st.divider()
+with tabs[1]:
 
-st.header(
-    "🔎 유사배당 실제 경기"
-)
-
-selected_site = st.selectbox(
-    "사이트 선택",
-    sorted(
-        results.keys()
+    st.subheader(
+        "📊 전체 백테스트"
     )
-)
 
-
-if selected_site in results:
-
-    r = results[
-        selected_site
-    ]
-
-    detail = r[
-        "data"
-    ].head(100).copy()
-
-    detail["결과"] = (
-        detail["result"]
-        .replace({
-            "H": "승",
-            "D": "무",
-            "A": "패"
-        })
+    bt = run_backtest(
+        df,
+        min_odds,
+        max_odds,
+        min_probability,
     )
 
-    detail = detail[
+    if bt.empty:
 
-        [
-            "season",
-            "league",
-            "match_date",
-            "home_team",
-            "away_team",
-            "home_odds",
-            "draw_odds",
-            "away_odds",
-            "result"
+        st.info(
+            "백테스트 가능한 데이터가 없습니다."
+        )
+
+    else:
+
+        m = metrics(bt)
+
+        c1, c2, c3, c4, c5, c6 = (
+            st.columns(6)
+        )
+
+        c1.metric(
+            "표본",
+            f"{m['games']:,}"
+        )
+
+        c2.metric(
+            "적중률",
+            f"{m['hit_rate']:.2f}%"
+        )
+
+        c3.metric(
+            "ROI",
+            f"{m['roi']:.2f}%"
+        )
+
+        c4.metric(
+            "수익",
+            f"{m['profit']:.2f}u"
+        )
+
+        c5.metric(
+            "평균배당",
+            f"{m['avg_odds']:.2f}"
+        )
+
+        c6.metric(
+            "최대낙폭",
+            f"{m['max_drawdown']:.2f}u"
+        )
+
+        if (
+            m["games"]
+            >= min_sample
+            and m["roi"] > 0
+        ):
+
+            st.success(
+                "🟢 현재 조건은 "
+                "백테스트상 양의 ROI입니다."
+            )
+
+        elif (
+            m["games"]
+            < min_sample
+        ):
+
+            st.warning(
+                "⚠️ 표본이 부족합니다."
+            )
+
+        else:
+
+            st.error(
+                "🔴 현재 조건의 ROI가 음수입니다."
+            )
+
+        st.subheader(
+            "📈 누적 수익"
+        )
+
+        chart = bt[
+            [
+                "date",
+                "cum_profit",
+            ]
+        ].copy()
+
+        chart = chart.set_index(
+            "date"
+        )
+
+        st.line_chart(
+            chart
+        )
+
+        win_streak, loss_streak = (
+            streak_stats(bt)
+        )
+
+        st.write(
+            f"최대 연속 적중: "
+            f"**{win_streak}회**"
+        )
+
+        st.write(
+            f"최대 연속 실패: "
+            f"**{loss_streak}회**"
+        )
+
+
+# ============================================================
+# TAB 3 ROI
+# ============================================================
+
+with tabs[2]:
+
+    st.subheader(
+        "💰 수익성 검증"
+    )
+
+    if df.empty:
+
+        st.info(
+            "데이터가 없습니다."
+        )
+
+    else:
+
+        train, validation, test = (
+            time_split(df)
+        )
+
+        sections = [
+            (
+                "2020~2024 학습",
+                train,
+            ),
+            (
+                "2025 검증",
+                validation,
+            ),
+            (
+                "2026 이후 테스트",
+                test,
+            ),
         ]
 
-    ]
+        result_rows = []
 
-    detail.columns = [
+        for name, part in sections:
 
-        "시즌",
-        "리그",
-        "날짜",
-        "홈팀",
-        "원정팀",
-        "승배당",
-        "무배당",
-        "패배당",
-        "결과"
+            x = run_backtest(
+                part,
+                min_odds,
+                max_odds,
+                min_probability,
+            )
 
-    ]
+            mm = metrics(x)
 
-    st.dataframe(
-        detail,
-        use_container_width=True,
-        hide_index=True,
-        height=450
+            result_rows.append({
+
+                "구간":
+                    name,
+
+                "경기수":
+                    mm["games"],
+
+                "적중":
+                    mm["hits"],
+
+                "적중률":
+                    mm["hit_rate"],
+
+                "ROI":
+                    mm["roi"],
+
+                "수익":
+                    mm["profit"],
+
+                "최대낙폭":
+                    mm["max_drawdown"],
+
+            })
+
+        table = pd.DataFrame(
+            result_rows
+        )
+
+        st.dataframe(
+            table.style.format({
+                "적중률":
+                    "{:.2f}%",
+                "ROI":
+                    "{:+.2f}%",
+                "수익":
+                    "{:+.2f}",
+                "최대낙폭":
+                    "{:.2f}",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # VALUE only
+        value_bt = value_filter(
+            run_backtest(
+                df,
+                min_odds,
+                max_odds,
+                min_probability,
+            ),
+            min_ev,
+        )
+
+        vm = metrics(
+            value_bt
+        )
+
+        st.subheader(
+            "🔥 VALUE 조건"
+        )
+
+        v1, v2, v3, v4 = (
+            st.columns(4)
+        )
+
+        v1.metric(
+            "VALUE 표본",
+            f"{vm['games']:,}"
+        )
+
+        v2.metric(
+            "적중률",
+            f"{vm['hit_rate']:.2f}%"
+        )
+
+        v3.metric(
+            "ROI",
+            f"{vm['roi']:+.2f}%"
+        )
+
+        v4.metric(
+            "최대낙폭",
+            f"{vm['max_drawdown']:.2f}u"
+        )
+
+        if (
+            vm["games"]
+            >= min_sample
+            and vm["roi"] > 0
+        ):
+
+            st.success(
+                "🟢 VALUE 조건 통과"
+            )
+
+        else:
+
+            st.warning(
+                "⚠️ VALUE 조건이 충분히 검증되지 않았습니다."
+            )
+
+
+# ============================================================
+# TAB 4 ODDS
+# ============================================================
+
+with tabs[3]:
+
+    st.subheader(
+        "📈 배당구간별 실제 결과"
     )
 
+    if df.empty:
 
-# =========================================================
-# DB 데이터 현황
-# =========================================================
+        st.info(
+            "데이터가 없습니다."
+        )
 
-st.divider()
+    else:
 
-st.header(
-    "📈 저장된 데이터 현황"
-)
+        x = df.copy()
 
-
-season_summary = (
-    db
-    .groupby(
-        "season"
-    )
-    .size()
-    .reset_index(
-        name="배당건수"
-    )
-    .sort_values(
-        "season",
-        ascending=False
-    )
-)
-
-
-st.dataframe(
-    season_summary,
-    use_container_width=True,
-    hide_index=True
-)
-
-
-# =========================================================
-# 사이트별 DB 데이터
-# =========================================================
-
-st.subheader(
-    "🌐 DB 사이트별 데이터"
-)
-
-
-site_summary = (
-    db
-    .groupby(
-        "bookmaker"
-    )
-    .size()
-    .reset_index(
-        name="배당건수"
-    )
-    .sort_values(
-        "배당건수",
-        ascending=False
-    )
-)
-
-
-st.dataframe(
-    site_summary,
-    use_container_width=True,
-    hide_index=True
-)
-
-
-# =========================================================
-# 리그별 데이터
-# =========================================================
-
-st.subheader(
-    "🏟️ 리그별 데이터"
-)
-
-
-league_summary = (
-    db
-    .groupby(
-        [
-            "country",
-            "league"
+        x = x[
+            x["home_odds"].notna()
         ]
+
+        if not x.empty:
+
+            x["배당구간"] = (
+                x["home_odds"]
+                .apply(
+                    odds_bucket
+                )
+            )
+
+            summary = (
+                x.groupby(
+                    "배당구간"
+                )
+                .agg(
+
+                    경기수=(
+                        "result",
+                        "count",
+                    ),
+
+                    홈승=(
+                        "result",
+                        lambda s:
+                        (s == "H").sum(),
+                    ),
+
+                    무=(
+                        "result",
+                        lambda s:
+                        (s == "D").sum(),
+                    ),
+
+                    원정승=(
+                        "result",
+                        lambda s:
+                        (s == "A").sum(),
+                    ),
+
+                )
+                .reset_index()
+            )
+
+            summary["홈승률"] = (
+                summary["홈승"]
+                /
+                summary["경기수"]
+                *
+                100
+            )
+
+            summary["무승부율"] = (
+                summary["무"]
+                /
+                summary["경기수"]
+                *
+                100
+            )
+
+            summary["원정승률"] = (
+                summary["원정승"]
+                /
+                summary["경기수"]
+                *
+                100
+            )
+
+            st.dataframe(
+                summary.style.format({
+                    "홈승률":
+                        "{:.2f}%",
+                    "무승부율":
+                        "{:.2f}%",
+                    "원정승률":
+                        "{:.2f}%",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+# ============================================================
+# TAB 5 SPORT/LEAGUE
+# ============================================================
+
+with tabs[4]:
+
+    st.subheader(
+        "🏆 종목별 / 리그별 ROI"
     )
-    .size()
-    .reset_index(
-        name="배당건수"
+
+    if df.empty:
+
+        st.info(
+            "데이터가 없습니다."
+        )
+
+    else:
+
+        bt = run_backtest(
+            df,
+            min_odds,
+            max_odds,
+            min_probability,
+        )
+
+        if not bt.empty:
+
+            sport_table = (
+                bt.groupby(
+                    "sport"
+                )
+                .agg(
+
+                    경기수=(
+                        "hit",
+                        "count",
+                    ),
+
+                    적중=(
+                        "hit",
+                        "sum",
+                    ),
+
+                    수익=(
+                        "profit",
+                        "sum",
+                    ),
+
+                )
+                .reset_index()
+            )
+
+            sport_table["적중률"] = (
+                sport_table["적중"]
+                /
+                sport_table["경기수"]
+                *
+                100
+            )
+
+            sport_table["ROI"] = (
+                sport_table["수익"]
+                /
+                sport_table["경기수"]
+                *
+                100
+            )
+
+            st.write(
+                "종목별"
+            )
+
+            st.dataframe(
+                sport_table.style.format({
+                    "적중률":
+                        "{:.2f}%",
+                    "ROI":
+                        "{:+.2f}%",
+                    "수익":
+                        "{:+.2f}",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            league_table = (
+                bt.groupby(
+                    [
+                        "sport",
+                        "league",
+                    ]
+                )
+                .agg(
+
+                    경기수=(
+                        "hit",
+                        "count",
+                    ),
+
+                    적중=(
+                        "hit",
+                        "sum",
+                    ),
+
+                    수익=(
+                        "profit",
+                        "sum",
+                    ),
+
+                )
+                .reset_index()
+            )
+
+            league_table["적중률"] = (
+                league_table["적중"]
+                /
+                league_table["경기수"]
+                *
+                100
+            )
+
+            league_table["ROI"] = (
+                league_table["수익"]
+                /
+                league_table["경기수"]
+                *
+                100
+            )
+
+            st.write(
+                "리그별"
+            )
+
+            st.dataframe(
+                league_table.sort_values(
+                    "ROI",
+                    ascending=False,
+                )
+                .style.format({
+                    "적중률":
+                        "{:.2f}%",
+                    "ROI":
+                        "{:+.2f}%",
+                    "수익":
+                        "{:+.2f}",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+# ============================================================
+# TAB 6 DATABASE
+# ============================================================
+
+with tabs[5]:
+
+    st.subheader(
+        "🗄️ 데이터베이스"
     )
-    .sort_values(
-        "배당건수",
-        ascending=False
+
+    st.write(
+        f"DB 위치: `{DB_PATH}`"
     )
-)
+
+    if not df.empty:
+
+        st.dataframe(
+            df.tail(500),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv = df.to_csv(
+            index=False
+        ).encode(
+            "utf-8-sig"
+        )
+
+        st.download_button(
+            "⬇️ 전체 데이터 CSV",
+            csv,
+            "sports_database.csv",
+            "text/csv",
+        )
+
+    else:
+
+        st.info(
+            "DB가 비어 있습니다."
+        )
 
 
-st.dataframe(
-    league_summary,
-    use_container_width=True,
-    hide_index=True
-)
+# ============================================================
+# TAB 7 SOURCES
+# ============================================================
+
+with tabs[6]:
+
+    st.subheader(
+        "⚙️ 데이터 출처 상태"
+    )
+
+    source_df = source_status()
+
+    if source_df.empty:
+
+        st.info(
+            "아직 수집 기록이 없습니다."
+        )
+
+    else:
+
+        st.dataframe(
+            source_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.markdown(
+        """
+### 현재 연결된 공개 출처
+
+- SportScore
+- 1.ML
+- SportSRC V1
+- 사용자 제공 CSV
+
+API 키 입력은 사용하지 않습니다.
+"""
+    )
+
+    st.markdown(
+        """
+**SportScore:** 공개 JSON API는 축구·농구·크리켓·테니스의
+경기, 결과, 순위 및 통계를 제공합니다.
+
+**1.ML:** 공개 JSON으로 실시간 경기와 sportsbook lines를
+제공합니다.
+
+**SportSRC:** 공개 V1 API에서 경기 일정과 결과 등을
+제공합니다.
+"""
+    )
 
 
-# =========================================================
-# CSV 다운로드
-# =========================================================
+# ============================================================
+# FOOTER
+# ============================================================
 
 st.divider()
 
-st.header(
-    "📥 데이터 다운로드"
-)
+st.markdown(
+    """
+### ⚠️ 분석 원칙
 
+이 프로그램은 **수익을 보장하지 않습니다.**
 
-csv_data = db.to_csv(
-    index=False,
-    encoding="utf-8-sig"
-)
+추천 조건은 다음 순서로 검증합니다.
 
+1. 충분한 표본
+2. 과거 백테스트
+3. 별도 검증기간
+4. 최신 테스트기간
+5. ROI
+6. 최대낙폭
+7. 연속 손실
+8. 기대값(EV)
 
-st.download_button(
-    "📥 전체 데이터 CSV 저장",
-    data=csv_data,
-    file_name="historical_odds_2020_2026.csv",
-    mime="text/csv",
-    use_container_width=True
-)
-
-
-# =========================================================
-# 안내
-# =========================================================
-
-st.divider()
-
-st.caption(
-    "데이터 출처: Football-Data.co.uk"
+과거 수익률이 미래 수익을 보장하지 않으며,
+실제 베팅 판단에는 별도의 위험관리가 필요합니다.
+"""
 )
 
 st.caption(
-    "가능한 경우 마감배당(Closing Odds)을 우선 사용합니다."
-)
-
-st.caption(
-    "2020/21 ~ 2026/27 현재까지의 데이터를 사용합니다."
-)
-
-st.caption(
-    "리그 및 시즌에 따라 제공되는 배당사이트가 다를 수 있습니다."
-)
-
-st.caption(
-    "과거 빈도 통계는 미래 경기 결과를 보장하지 않습니다."
+    "Sports Analyzer PRO"
 )
