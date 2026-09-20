@@ -1,37 +1,39 @@
 # ============================================================
-# SPORTS ANALYZER PRO
+# SPORTS ANALYZER PRO - FINAL
 # ============================================================
+# 무료 공개 스포츠 데이터 분석 프로그램
 #
-# 무료 공개 스포츠 데이터 + 배당 + 결과 + SQLite + 백테스트
-#
-# 기능
+# 주요 기능
 # ------------------------------------------------------------
-# 1. SportScore 공개 API
-# 2. 1.ML 공개 배당 API
-# 3. SportSRC V1 공개 API
-# 4. CSV 수동/자동 import
-# 5. SQLite 자동 저장
-# 6. 경기 중복 제거
-# 7. 승/무/패 확률
-# 8. 오버/언더
-# 9. 배당구간 분석
-# 10. 동일배당 과거 통계
-# 11. 시계열 백테스트
-# 12. ROI
-# 13. 최대낙폭
-# 14. 연속 적중/실패
-# 15. 최근 성과
-# 16. Value Score
-# 17. 종목별 분석
-# 18. 리그별 분석
-# 19. 데이터 출처별 현황
-# 20. 자동 새로고침
+# 1. 공개 데이터 수집
+# 2. 사이트별 독립 수집
+# 3. 자동 재시도
+# 4. Timeout 처리
+# 5. Connection 오류 처리
+# 6. 부분 저장
+# 7. 중복 경기 제거
+# 8. 경기 결과 저장
+# 9. 배당 저장
+# 10. 승/무/패 확률
+# 11. No-Vig 확률
+# 12. EV 계산
+# 13. 배당구간 분석
+# 14. 백테스트
+# 15. ROI
+# 16. 최대 낙폭
+# 17. 연속 적중/실패
+# 18. 종목별 분석
+# 19. 리그별 분석
+# 20. 연도별 분석
+# 21. 데이터 출처별 로그
+# 22. CSV Import
+# 23. CSV Export
+# 24. 오류가 나도 전체 프로그램 계속 실행
 #
 # 실행
 # ------------------------------------------------------------
-# pip install streamlit requests pandas numpy
+# pip install -r requirements.txt
 # streamlit run app.py
-#
 # ============================================================
 
 import sqlite3
@@ -39,17 +41,18 @@ import json
 import time
 import math
 import hashlib
+import traceback
 from pathlib import Path
 from datetime import datetime, timezone
 
-import numpy as np
-import pandas as pd
 import requests
+import pandas as pd
+import numpy as np
 import streamlit as st
 
 
 # ============================================================
-# CONFIG
+# 기본 설정
 # ============================================================
 
 APP_NAME = "Sports Analyzer PRO"
@@ -57,24 +60,60 @@ APP_NAME = "Sports Analyzer PRO"
 BASE_DIR = Path(__file__).resolve().parent
 
 DATA_DIR = BASE_DIR / "data"
-IMPORT_DIR = DATA_DIR / "import"
 EXPORT_DIR = DATA_DIR / "export"
+IMPORT_DIR = DATA_DIR / "import"
 
 DB_PATH = DATA_DIR / "sports.db"
 
-DATA_DIR.mkdir(exist_ok=True)
-IMPORT_DIR.mkdir(exist_ok=True)
-EXPORT_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+EXPORT_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+IMPORT_DIR.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
 
-SPORTSCORE_BASE = "https://sportscore.com"
+# ============================================================
+# 공개 데이터 주소
+# ============================================================
 
-ONEML_ODDS_URL = "https://1.ml/api/v1/odds"
+SPORTSCORE_BASE = (
+    "https://sportscore.com"
+)
 
-SPORTSRC_BASE = "https://api.sportsrc.org/"
+SPORTSCORE_MATCH_URL = (
+    SPORTSCORE_BASE
+    + "/api/widget/matches/"
+)
+
+ONEML_ODDS_URL = (
+    "https://1.ml/api/v1/odds"
+)
+
+SPORTSRC_BASE = (
+    "https://api.sportsrc.org/"
+)
 
 
-SPORTSCORE_SPORTS = [
+# ============================================================
+# 수집 설정
+# ============================================================
+
+REQUEST_TIMEOUT = 15
+
+MAX_RETRY = 3
+
+RETRY_DELAY = 2
+
+SPORTS = [
     "football",
     "basketball",
     "cricket",
@@ -82,13 +121,10 @@ SPORTSCORE_SPORTS = [
 ]
 
 
-REQUEST_TIMEOUT = 15
-
 USER_AGENT = (
     "SportsAnalyzerPRO/1.0 "
-    "(public-data-client)"
+    "public-data-client"
 )
-
 
 HEADERS = {
     "User-Agent": USER_AGENT,
@@ -97,19 +133,78 @@ HEADERS = {
 
 
 # ============================================================
-# STREAMLIT
+# Streamlit
 # ============================================================
 
 st.set_page_config(
     page_title=APP_NAME,
     page_icon="🏆",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 
 # ============================================================
-# DATABASE
+# 시간
+# ============================================================
+
+def now_utc():
+
+    return datetime.now(
+        timezone.utc
+    ).isoformat()
+
+
+# ============================================================
+# 안전 문자열
+# ============================================================
+
+def clean_text(value):
+
+    if value is None:
+        return ""
+
+    if isinstance(value, float):
+
+        if np.isnan(value):
+            return ""
+
+    return str(value).strip()
+
+
+# ============================================================
+# 안전 숫자
+# ============================================================
+
+def safe_float(value):
+
+    try:
+
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+
+            value = (
+                value
+                .replace(",", "")
+                .replace("%", "")
+                .strip()
+            )
+
+        result = float(value)
+
+        if not math.isfinite(result):
+            return None
+
+        return result
+
+    except Exception:
+
+        return None
+
+
+# ============================================================
+# DB
 # ============================================================
 
 def get_connection():
@@ -120,7 +215,7 @@ def get_connection():
     )
 
 
-def initialize_database():
+def init_database():
 
     con = get_connection()
 
@@ -174,30 +269,33 @@ def initialize_database():
             created_at TEXT,
 
             updated_at TEXT
+
         )
     """)
 
     cur.execute("""
         CREATE INDEX IF NOT EXISTS
-        idx_matches_date
+        idx_match_date
         ON matches(match_date)
     """)
 
     cur.execute("""
         CREATE INDEX IF NOT EXISTS
-        idx_matches_sport
+        idx_match_sport
         ON matches(sport)
     """)
 
     cur.execute("""
         CREATE INDEX IF NOT EXISTS
-        idx_matches_teams
-        ON matches(home_team, away_team)
+        idx_match_teams
+        ON matches(
+            home_team,
+            away_team
+        )
     """)
 
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS
-        source_log (
+        CREATE TABLE IF NOT EXISTS source_log (
 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
@@ -207,79 +305,233 @@ def initialize_database():
 
             rows INTEGER,
 
+            attempt INTEGER,
+
             message TEXT,
 
             created_at TEXT
+
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS odds_history (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            event_key TEXT,
+
+            bookmaker TEXT,
+
+            home_odds REAL,
+
+            draw_odds REAL,
+
+            away_odds REAL,
+
+            captured_at TEXT
+
         )
     """)
 
     con.commit()
+
     con.close()
 
 
-initialize_database()
+init_database()
 
 
 # ============================================================
-# UTILITY
+# 로그
 # ============================================================
 
-def now_utc():
-
-    return datetime.now(
-        timezone.utc
-    ).isoformat()
-
-
-def clean_text(value):
-
-    if value is None:
-        return ""
-
-    return str(value).strip()
-
-
-def safe_float(value):
+def write_log(
+    source,
+    success,
+    rows=0,
+    attempt=0,
+    message="",
+):
 
     try:
 
-        if value is None:
-            return None
+        con = get_connection()
 
-        if isinstance(value, str):
-
-            value = (
-                value
-                .replace(",", "")
-                .replace("%", "")
-                .strip()
+        con.execute("""
+            INSERT INTO source_log
+            (
+                source,
+                success,
+                rows,
+                attempt,
+                message,
+                created_at
             )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            source,
+            1 if success else 0,
+            int(rows),
+            int(attempt),
+            clean_text(message)[:2000],
+            now_utc(),
+        ))
 
-        x = float(value)
+        con.commit()
 
-        if not math.isfinite(x):
-            return None
-
-        return x
+        con.close()
 
     except Exception:
 
-        return None
+        pass
 
+
+# ============================================================
+# HTTP GET
+# ============================================================
+
+def request_json(
+    url,
+    params=None,
+    source="unknown",
+):
+
+    last_error = ""
+
+    for attempt in range(
+        1,
+        MAX_RETRY + 1
+    ):
+
+        try:
+
+            response = requests.get(
+                url,
+                params=params,
+                headers=HEADERS,
+                timeout=REQUEST_TIMEOUT,
+            )
+
+            if response.status_code == 429:
+
+                last_error = (
+                    "HTTP 429 - rate limited"
+                )
+
+                time.sleep(
+                    RETRY_DELAY * attempt
+                )
+
+                continue
+
+            if response.status_code in (
+                403,
+                401,
+            ):
+
+                last_error = (
+                    f"HTTP {response.status_code}"
+                )
+
+                write_log(
+                    source,
+                    False,
+                    0,
+                    attempt,
+                    last_error,
+                )
+
+                return None
+
+            response.raise_for_status()
+
+            try:
+
+                data = response.json()
+
+            except Exception:
+
+                last_error = (
+                    "응답이 JSON 형식이 아님"
+                )
+
+                write_log(
+                    source,
+                    False,
+                    0,
+                    attempt,
+                    last_error,
+                )
+
+                continue
+
+            write_log(
+                source,
+                True,
+                1,
+                attempt,
+                "success",
+            )
+
+            return data
+
+        except requests.exceptions.Timeout as e:
+
+            last_error = (
+                f"Timeout: {e}"
+            )
+
+        except requests.exceptions.ConnectionError as e:
+
+            last_error = (
+                f"ConnectionError: {e}"
+            )
+
+        except requests.exceptions.RequestException as e:
+
+            last_error = (
+                f"RequestException: {e}"
+            )
+
+        except Exception as e:
+
+            last_error = (
+                f"UnknownError: {e}"
+            )
+
+        write_log(
+            source,
+            False,
+            0,
+            attempt,
+            last_error,
+        )
+
+        time.sleep(
+            RETRY_DELAY * attempt
+        )
+
+    return None
+
+
+# ============================================================
+# 정규화
+# ============================================================
 
 def normalize_team(value):
 
-    value = clean_text(value)
-
-    value = value.lower()
+    value = clean_text(
+        value
+    ).lower()
 
     chars = []
 
-    for c in value:
+    for char in value:
 
-        if c.isalnum():
+        if char.isalnum():
 
-            chars.append(c)
+            chars.append(char)
 
     return "".join(chars)
 
@@ -292,7 +544,7 @@ def make_event_key(
 ):
 
     raw = "|".join([
-        clean_text(sport).lower(),
+        normalize_team(sport),
         clean_text(date)[:16],
         normalize_team(home),
         normalize_team(away),
@@ -304,1046 +556,557 @@ def make_event_key(
 
 
 # ============================================================
-# HTTP
+# 딕셔너리 검색
 # ============================================================
 
-@st.cache_data(
-    ttl=60,
-    show_spinner=False,
-)
-def http_get_json(
-    url,
-    params=None,
-):
-
-    try:
-
-        r = requests.get(
-            url,
-            params=params,
-            headers=HEADERS,
-            timeout=REQUEST_TIMEOUT,
-        )
-
-        r.raise_for_status()
-
-        return {
-            "ok": True,
-            "status": r.status_code,
-            "data": r.json(),
-            "error": "",
-        }
-
-    except Exception as e:
-
-        return {
-            "ok": False,
-            "status": 0,
-            "data": None,
-            "error": str(e),
-        }
-
-
-# ============================================================
-# SOURCE LOG
-# ============================================================
-
-def log_source(
-    source,
-    success,
-    rows,
-    message="",
-):
-
-    con = get_connection()
-
-    con.execute("""
-        INSERT INTO source_log
-        (
-            source,
-            success,
-            rows,
-            message,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        source,
-        1 if success else 0,
-        rows,
-        message[:1000],
-        now_utc(),
-    ))
-
-    con.commit()
-    con.close()
-
-
-# ============================================================
-# GENERIC DATA EXTRACTOR
-# ============================================================
-
-def first_value(
-    obj,
+def get_value(
+    data,
     keys,
 ):
 
-    if not isinstance(obj, dict):
+    if not isinstance(
+        data,
+        dict
+    ):
+
         return None
 
-    lower_map = {
+    lower = {
         str(k).lower(): v
-        for k, v in obj.items()
+        for k, v in data.items()
     }
 
     for key in keys:
 
-        if key in obj:
-            return obj[key]
+        if key in data:
 
-        if key.lower() in lower_map:
-            return lower_map[key.lower()]
+            return data[key]
+
+        key_lower = key.lower()
+
+        if key_lower in lower:
+
+            return lower[key_lower]
 
     return None
 
 
-def find_list(
-    data,
-):
+# ============================================================
+# 리스트 검색
+# ============================================================
 
-    if isinstance(data, list):
+def find_list(data):
+
+    if isinstance(
+        data,
+        list
+    ):
+
         return data
 
-    if isinstance(data, dict):
+    if not isinstance(
+        data,
+        dict
+    ):
 
-        preferred = [
-            "matches",
-            "games",
-            "events",
-            "data",
-            "results",
-            "fixtures",
-            "items",
-        ]
+        return []
 
-        for key in preferred:
+    possible = [
+        "matches",
+        "games",
+        "events",
+        "data",
+        "results",
+        "fixtures",
+        "items",
+    ]
 
-            value = first_value(
-                data,
-                [key],
-            )
+    for key in possible:
 
-            if isinstance(value, list):
-                return value
+        value = get_value(
+            data,
+            [key]
+        )
 
-        for value in data.values():
+        if isinstance(
+            value,
+            list
+        ):
 
-            if isinstance(value, list):
+            return value
 
-                return value
+    for value in data.values():
+
+        if isinstance(
+            value,
+            list
+        ):
+
+            return value
 
     return []
 
 
 # ============================================================
-# SPORT SCORE
+# SportScore
 # ============================================================
 
 def fetch_sportscore(
     sport,
-    limit=50,
+    limit=100,
 ):
 
-    url = (
-        SPORTSCORE_BASE
-        + "/api/widget/matches/"
+    source = (
+        f"SportScore/{sport}"
     )
 
-    result = http_get_json(
-        url,
-        {
+    data = request_json(
+        SPORTSCORE_MATCH_URL,
+        params={
             "sport": sport,
             "limit": limit,
-            "src": "sports-analyzer-pro",
         },
+        source=source,
     )
 
-    if not result["ok"]:
-
-        log_source(
-            f"SportScore/{sport}",
-            False,
-            0,
-            result["error"],
-        )
+    if data is None:
 
         return []
 
-    data = result["data"]
-
-    rows = find_list(data)
+    rows = find_list(
+        data
+    )
 
     output = []
 
     for item in rows:
 
-        if not isinstance(item, dict):
-            continue
+        try:
 
-        home = first_value(
-            item,
-            [
-                "home",
-                "homeTeam",
-                "home_team",
-            ],
-        )
+            if not isinstance(
+                item,
+                dict
+            ):
 
-        away = first_value(
-            item,
-            [
-                "away",
-                "awayTeam",
-                "away_team",
-            ],
-        )
+                continue
 
-        if isinstance(home, dict):
+            home = get_value(
+                item,
+                [
+                    "home",
+                    "homeTeam",
+                    "home_team",
+                ],
+            )
 
-            home = first_value(
+            away = get_value(
+                item,
+                [
+                    "away",
+                    "awayTeam",
+                    "away_team",
+                ],
+            )
+
+            if isinstance(
                 home,
-                ["name", "title"],
-            )
+                dict
+            ):
 
-        if isinstance(away, dict):
+                home = get_value(
+                    home,
+                    [
+                        "name",
+                        "title",
+                    ],
+                )
 
-            away = first_value(
+            if isinstance(
                 away,
-                ["name", "title"],
+                dict
+            ):
+
+                away = get_value(
+                    away,
+                    [
+                        "name",
+                        "title",
+                    ],
+                )
+
+            home = clean_text(
+                home
             )
 
-        home = clean_text(home)
-        away = clean_text(away)
-
-        if not home or not away:
-            continue
-
-        date = first_value(
-            item,
-            [
-                "startTime",
-                "start_time",
-                "commence_time",
-                "date",
-                "start",
-            ],
-        )
-
-        status = first_value(
-            item,
-            [
-                "status",
-                "state",
-            ],
-        )
-
-        home_score = first_value(
-            item,
-            [
-                "homeScore",
-                "home_score",
-            ],
-        )
-
-        away_score = first_value(
-            item,
-            [
-                "awayScore",
-                "away_score",
-            ],
-        )
-
-        if isinstance(
-            home_score,
-            dict,
-        ):
-
-            home_score = first_value(
-                home_score,
-                ["current", "score", "value"],
+            away = clean_text(
+                away
             )
 
-        if isinstance(
-            away_score,
-            dict,
-        ):
+            if not home or not away:
 
-            away_score = first_value(
-                away_score,
-                ["current", "score", "value"],
+                continue
+
+            date = get_value(
+                item,
+                [
+                    "startTime",
+                    "start_time",
+                    "commence_time",
+                    "date",
+                    "start",
+                ],
             )
 
-        league = first_value(
-            item,
-            [
-                "competition",
-                "league",
-                "tournament",
-            ],
-        )
+            league = get_value(
+                item,
+                [
+                    "competition",
+                    "league",
+                    "tournament",
+                ],
+            )
 
-        if isinstance(
-            league,
-            dict,
-        ):
-
-            league = first_value(
+            if isinstance(
                 league,
-                ["name", "title"],
+                dict
+            ):
+
+                league = get_value(
+                    league,
+                    [
+                        "name",
+                        "title",
+                    ],
+                )
+
+            hs = get_value(
+                item,
+                [
+                    "homeScore",
+                    "home_score",
+                ],
             )
 
-        output.append({
+            aws = get_value(
+                item,
+                [
+                    "awayScore",
+                    "away_score",
+                ],
+            )
 
-            "source":
-                "SportScore",
+            if isinstance(
+                hs,
+                dict
+            ):
 
-            "sport":
-                sport,
+                hs = get_value(
+                    hs,
+                    [
+                        "current",
+                        "score",
+                        "value",
+                    ],
+                )
 
-            "league":
-                clean_text(league),
+            if isinstance(
+                aws,
+                dict
+            ):
 
-            "country":
-                "",
+                aws = get_value(
+                    aws,
+                    [
+                        "current",
+                        "score",
+                        "value",
+                    ],
+                )
 
-            "match_date":
-                clean_text(date),
+            output.append({
 
-            "home_team":
-                home,
+                "source":
+                    "SportScore",
 
-            "away_team":
-                away,
+                "sport":
+                    sport,
 
-            "home_score":
-                safe_float(home_score),
+                "league":
+                    clean_text(
+                        league
+                    ),
 
-            "away_score":
-                safe_float(away_score),
+                "country":
+                    "",
 
-            "status":
-                clean_text(status),
+                "match_date":
+                    clean_text(
+                        date
+                    ),
 
-            "raw_json":
-                json.dumps(
-                    item,
-                    ensure_ascii=False,
-                    default=str,
-                ),
+                "home_team":
+                    home,
 
-        })
+                "away_team":
+                    away,
 
-    log_source(
-        f"SportScore/{sport}",
+                "home_score":
+                    safe_float(hs),
+
+                "away_score":
+                    safe_float(aws),
+
+                "status":
+                    clean_text(
+                        get_value(
+                            item,
+                            [
+                                "status",
+                                "state",
+                            ],
+                        )
+                    ),
+
+                "raw_json":
+                    json.dumps(
+                        item,
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+
+            })
+
+        except Exception as e:
+
+            write_log(
+                source,
+                False,
+                0,
+                0,
+                f"item error: {e}",
+            )
+
+            continue
+
+    write_log(
+        source,
         True,
         len(output),
+        0,
+        "parsed",
     )
 
     return output
 
 
 # ============================================================
-# SPORTSRC V1
+# SportSRC
 # ============================================================
 
 def fetch_sportsrc(
     sport,
 ):
 
-    url = SPORTSRC_BASE
+    source = (
+        f"SportSRC/{sport}"
+    )
 
-    result = http_get_json(
-        url,
-        {
+    data = request_json(
+        SPORTSRC_BASE,
+        params={
             "data": "matches",
             "category": sport,
         },
+        source=source,
     )
 
-    if not result["ok"]:
-
-        log_source(
-            f"SportSRC/{sport}",
-            False,
-            0,
-            result["error"],
-        )
+    if data is None:
 
         return []
 
     rows = find_list(
-        result["data"]
+        data
     )
 
     output = []
 
     for item in rows:
 
-        if not isinstance(item, dict):
-            continue
+        try:
 
-        home = first_value(
-            item,
-            [
-                "home",
-                "homeTeam",
-                "home_team",
-                "team1",
-            ],
-        )
+            if not isinstance(
+                item,
+                dict
+            ):
 
-        away = first_value(
-            item,
-            [
-                "away",
-                "awayTeam",
-                "away_team",
-                "team2",
-            ],
-        )
+                continue
 
-        if isinstance(home, dict):
-
-            home = first_value(
-                home,
-                ["name", "title"],
-            )
-
-        if isinstance(away, dict):
-
-            away = first_value(
-                away,
-                ["name", "title"],
-            )
-
-        home = clean_text(home)
-        away = clean_text(away)
-
-        if not home or not away:
-            continue
-
-        date = first_value(
-            item,
-            [
-                "date",
-                "startTime",
-                "start_time",
-                "timestamp",
-            ],
-        )
-
-        output.append({
-
-            "source":
-                "SportSRC",
-
-            "sport":
-                sport,
-
-            "league":
-                clean_text(
-                    first_value(
-                        item,
-                        [
-                            "league",
-                            "competition",
-                        ],
-                    )
-                ),
-
-            "country":
-                "",
-
-            "match_date":
-                clean_text(date),
-
-            "home_team":
-                home,
-
-            "away_team":
-                away,
-
-            "home_score":
-                safe_float(
-                    first_value(
-                        item,
-                        [
-                            "homeScore",
-                            "home_score",
-                        ],
-                    )
-                ),
-
-            "away_score":
-                safe_float(
-                    first_value(
-                        item,
-                        [
-                            "awayScore",
-                            "away_score",
-                        ],
-                    )
-                ),
-
-            "status":
-                clean_text(
-                    first_value(
-                        item,
-                        [
-                            "status",
-                            "state",
-                        ],
-                    )
-                ),
-
-            "raw_json":
-                json.dumps(
-                    item,
-                    ensure_ascii=False,
-                    default=str,
-                ),
-
-        })
-
-    log_source(
-        f"SportSRC/{sport}",
-        True,
-        len(output),
-    )
-
-    return output
-
-
-# ============================================================
-# 1.ML ODDS
-# ============================================================
-
-def flatten_objects(
-    value,
-):
-
-    if isinstance(value, list):
-        return value
-
-    if isinstance(value, dict):
-
-        for key in [
-            "games",
-            "events",
-            "matches",
-            "data",
-            "odds",
-        ]:
-
-            x = first_value(
-                value,
-                [key],
-            )
-
-            if isinstance(x, list):
-                return x
-
-        return [value]
-
-    return []
-
-
-def parse_1ml_odds():
-
-    result = http_get_json(
-        ONEML_ODDS_URL
-    )
-
-    if not result["ok"]:
-
-        log_source(
-            "1.ML",
-            False,
-            0,
-            result["error"],
-        )
-
-        return []
-
-    rows = flatten_objects(
-        result["data"]
-    )
-
-    output = []
-
-    for game in rows:
-
-        if not isinstance(game, dict):
-            continue
-
-        home = first_value(
-            game,
-            [
-                "home",
-                "home_team",
-                "homeTeam",
-            ],
-        )
-
-        away = first_value(
-            game,
-            [
-                "away",
-                "away_team",
-                "awayTeam",
-            ],
-        )
-
-        if isinstance(home, dict):
-
-            home = first_value(
-                home,
-                ["name", "title"],
-            )
-
-        if isinstance(away, dict):
-
-            away = first_value(
-                away,
-                ["name", "title"],
-            )
-
-        home = clean_text(home)
-        away = clean_text(away)
-
-        if not home or not away:
-            continue
-
-        date = first_value(
-            game,
-            [
-                "commence_time",
-                "start_time",
-                "startTime",
-                "date",
-            ],
-        )
-
-        output.append({
-
-            "source":
-                "1.ML",
-
-            "sport":
-                clean_text(
-                    first_value(
-                        game,
-                        [
-                            "sport",
-                            "category",
-                        ],
-                    )
-                ),
-
-            "league":
-                clean_text(
-                    first_value(
-                        game,
-                        [
-                            "league",
-                            "competition",
-                        ],
-                    )
-                ),
-
-            "match_date":
-                clean_text(date),
-
-            "home_team":
-                home,
-
-            "away_team":
-                away,
-
-            "raw_json":
-                json.dumps(
-                    game,
-                    ensure_ascii=False,
-                    default=str,
-                ),
-
-        })
-
-    log_source(
-        "1.ML",
-        True,
-        len(output),
-    )
-
-    return output
-
-
-# ============================================================
-# ODDS EXTRACTION
-# ============================================================
-
-def extract_odds(
-    raw,
-):
-
-    if not isinstance(raw, dict):
-        return []
-
-    found = []
-
-    def walk(
-        obj,
-        bookmaker="",
-    ):
-
-        if isinstance(obj, dict):
-
-            name = first_value(
-                obj,
+            home = get_value(
+                item,
                 [
-                    "bookmaker",
-                    "book",
-                    "sportsbook",
-                    "site",
-                    "name",
+                    "home",
+                    "homeTeam",
+                    "home_team",
+                    "team1",
                 ],
             )
 
-            if name:
-                bookmaker = clean_text(name)
-
-            keys = {
-                str(k).lower(): v
-                for k, v in obj.items()
-            }
-
-            home = None
-            draw = None
-            away = None
-
-            for k, v in keys.items():
-
-                if k in [
-                    "home",
-                    "hometeam",
-                    "homeodds",
-                    "home_odds",
-                ]:
-                    home = safe_float(v)
-
-                elif k in [
-                    "draw",
-                    "drawodds",
-                    "draw_odds",
-                ]:
-                    draw = safe_float(v)
-
-                elif k in [
+            away = get_value(
+                item,
+                [
                     "away",
-                    "awayodds",
-                    "away_odds",
-                ]:
-                    away = safe_float(v)
+                    "awayTeam",
+                    "away_team",
+                    "team2",
+                ],
+            )
 
-            if (
-                home
-                and draw
-                and away
-                and home > 1
-                and draw > 1
-                and away > 1
+            if isinstance(
+                home,
+                dict
             ):
 
-                found.append({
-
-                    "bookmaker":
-                        bookmaker,
-
-                    "home":
-                        home,
-
-                    "draw":
-                        draw,
-
-                    "away":
-                        away,
-
-                })
-
-            for v in obj.values():
-
-                walk(
-                    v,
-                    bookmaker,
+                home = get_value(
+                    home,
+                    [
+                        "name",
+                        "title",
+                    ],
                 )
 
-        elif isinstance(obj, list):
+            if isinstance(
+                away,
+                dict
+            ):
 
-            for v in obj:
-
-                walk(
-                    v,
-                    bookmaker,
+                away = get_value(
+                    away,
+                    [
+                        "name",
+                        "title",
+                    ],
                 )
 
-    walk(raw)
+            home = clean_text(
+                home
+            )
 
-    unique = []
+            away = clean_text(
+                away
+            )
 
-    seen = set()
+            if not home or not away:
 
-    for x in found:
+                continue
 
-        key = (
-            x["bookmaker"],
-            x["home"],
-            x["draw"],
-            x["away"],
-        )
+            date = get_value(
+                item,
+                [
+                    "date",
+                    "startTime",
+                    "start_time",
+                    "timestamp",
+                ],
+            )
 
-        if key not in seen:
+            output.append({
 
-            seen.add(key)
+                "source":
+                    "SportSRC",
 
-            unique.append(x)
+                "sport":
+                    sport,
 
-    return unique
+                "league":
+                    clean_text(
+                        get_value(
+                            item,
+                            [
+                                "league",
+                                "competition",
+                            ],
+                        )
+                    ),
 
+                "country":
+                    "",
 
-# ============================================================
-# IMPLIED PROBABILITY
-# ============================================================
+                "match_date":
+                    clean_text(date),
 
-def no_vig_probability(
-    home,
-    draw,
-    away,
-):
+                "home_team":
+                    home,
 
-    vals = [
-        safe_float(home),
-        safe_float(draw),
-        safe_float(away),
-    ]
+                "away_team":
+                    away,
 
-    inv = []
+                "home_score":
+                    safe_float(
+                        get_value(
+                            item,
+                            [
+                                "homeScore",
+                                "home_score",
+                            ],
+                        )
+                    ),
 
-    for x in vals:
+                "away_score":
+                    safe_float(
+                        get_value(
+                            item,
+                            [
+                                "awayScore",
+                                "away_score",
+                            ],
+                        )
+                    ),
 
-        if x is None or x <= 1:
-            inv.append(0)
+                "status":
+                    clean_text(
+                        get_value(
+                            item,
+                            [
+                                "status",
+                                "state",
+                            ],
+                        )
+                    ),
 
-        else:
-            inv.append(1 / x)
+                "raw_json":
+                    json.dumps(
+                        item,
+                        ensure_ascii=False,
+                        default=str,
+                    ),
 
-    total = sum(inv)
+            })
 
-    if total <= 0:
-        return [0, 0, 0]
+        except Exception as e:
 
-    return [
-        x / total
-        for x in inv
-    ]
-
-
-# ============================================================
-# DATABASE UPSERT
-# ============================================================
-
-def save_match(
-    match,
-):
-
-    sport = clean_text(
-        match.get("sport")
-    )
-
-    date = clean_text(
-        match.get("match_date")
-    )
-
-    home = clean_text(
-        match.get("home_team")
-    )
-
-    away = clean_text(
-        match.get("away_team")
-    )
-
-    if not home or not away:
-        return False
-
-    event_key = make_event_key(
-        sport,
-        date,
-        home,
-        away,
-    )
-
-    con = get_connection()
-
-    existing = con.execute(
-        """
-        SELECT id
-        FROM matches
-        WHERE event_key = ?
-        """,
-        (event_key,),
-    ).fetchone()
-
-    values = (
-
-        match.get("source", ""),
-
-        sport,
-
-        match.get("league", ""),
-
-        match.get("country", ""),
-
-        date,
-
-        home,
-
-        away,
-
-        match.get("home_score"),
-
-        match.get("away_score"),
-
-        match.get("status", ""),
-
-        match.get("result"),
-
-        match.get("home_odds"),
-
-        match.get("draw_odds"),
-
-        match.get("away_odds"),
-
-        match.get("over25_odds"),
-
-        match.get("under25_odds"),
-
-        match.get("odds_source", ""),
-
-        match.get("odds_updated", ""),
-
-        match.get("raw_json", ""),
-
-        now_utc(),
-
-        now_utc(),
-    )
-
-    if existing:
-
-        con.execute(
-            """
-            UPDATE matches
-            SET
-                source = ?,
-                sport = ?,
-                league = ?,
-                country = ?,
-                match_date = ?,
-                home_team = ?,
-                away_team = ?,
-                home_score = COALESCE(?, home_score),
-                away_score = COALESCE(?, away_score),
-                status = ?,
-                result = COALESCE(?, result),
-                home_odds = COALESCE(?, home_odds),
-                draw_odds = COALESCE(?, draw_odds),
-                away_odds = COALESCE(?, away_odds),
-                over25_odds = COALESCE(?, over25_odds),
-                under25_odds = COALESCE(?, under25_odds),
-                odds_source = ?,
-                odds_updated = ?,
-                raw_json = ?,
-                updated_at = ?
-            WHERE event_key = ?
-            """,
-            values + (event_key,),
-        )
-
-    else:
-
-        con.execute(
-            """
-            INSERT INTO matches
-            (
-                event_key,
+            write_log(
                 source,
-                sport,
-                league,
-                country,
-                match_date,
-                home_team,
-                away_team,
-                home_score,
-                away_score,
-                status,
-                result,
-                home_odds,
-                draw_odds,
-                away_odds,
-                over25_odds,
-                under25_odds,
-                odds_source,
-                odds_updated,
-                raw_json,
-                created_at,
-                updated_at
+                False,
+                0,
+                0,
+                f"item error: {e}",
             )
-            VALUES
-            (
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?,
-                ?
-            )
-            """,
-            (event_key,) + values,
-        )
 
-    con.commit()
-    con.close()
+            continue
 
-    return True
+    write_log(
+        source,
+        True,
+        len(output),
+        0,
+        "parsed",
+    )
+
+    return output
 
 
 # ============================================================
-# RESULT CALCULATION
+# 결과
 # ============================================================
 
 def calculate_result(
@@ -1360,6 +1123,7 @@ def calculate_result(
     )
 
     if h is None or a is None:
+
         return None
 
     if h > a:
@@ -1372,40 +1136,529 @@ def calculate_result(
 
 
 # ============================================================
-# LOAD DB
+# 안전한 경기 저장
+# ============================================================
+
+def save_match(
+    match
+):
+
+    try:
+
+        sport = clean_text(
+            match.get("sport")
+        )
+
+        date = clean_text(
+            match.get("match_date")
+        )
+
+        home = clean_text(
+            match.get("home_team")
+        )
+
+        away = clean_text(
+            match.get("away_team")
+        )
+
+        if not home or not away:
+
+            return False
+
+        key = make_event_key(
+            sport,
+            date,
+            home,
+            away,
+        )
+
+        result = match.get(
+            "result"
+        )
+
+        if not result:
+
+            result = calculate_result(
+                match.get(
+                    "home_score"
+                ),
+                match.get(
+                    "away_score"
+                ),
+            )
+
+        con = get_connection()
+
+        existing = con.execute(
+            """
+            SELECT id
+            FROM matches
+            WHERE event_key=?
+            """,
+            (key,),
+        ).fetchone()
+
+        values = (
+
+            match.get(
+                "source",
+                ""
+            ),
+
+            sport,
+
+            match.get(
+                "league",
+                ""
+            ),
+
+            match.get(
+                "country",
+                ""
+            ),
+
+            date,
+
+            home,
+
+            away,
+
+            safe_float(
+                match.get(
+                    "home_score"
+                )
+            ),
+
+            safe_float(
+                match.get(
+                    "away_score"
+                )
+            ),
+
+            match.get(
+                "status",
+                ""
+            ),
+
+            result,
+
+            safe_float(
+                match.get(
+                    "home_odds"
+                )
+            ),
+
+            safe_float(
+                match.get(
+                    "draw_odds"
+                )
+            ),
+
+            safe_float(
+                match.get(
+                    "away_odds"
+                )
+            ),
+
+            safe_float(
+                match.get(
+                    "over25_odds"
+                )
+            ),
+
+            safe_float(
+                match.get(
+                    "under25_odds"
+                )
+            ),
+
+            match.get(
+                "odds_source",
+                ""
+            ),
+
+            match.get(
+                "odds_updated",
+                ""
+            ),
+
+            match.get(
+                "raw_json",
+                ""
+            ),
+
+            now_utc(),
+
+            now_utc(),
+
+        )
+
+        if existing:
+
+            con.execute(
+                """
+                UPDATE matches
+                SET
+                    source=?,
+                    sport=?,
+                    league=?,
+                    country=?,
+                    match_date=?,
+                    home_team=?,
+                    away_team=?,
+                    home_score=
+                        COALESCE(
+                            ?,
+                            home_score
+                        ),
+                    away_score=
+                        COALESCE(
+                            ?,
+                            away_score
+                        ),
+                    status=?,
+                    result=
+                        COALESCE(
+                            ?,
+                            result
+                        ),
+                    home_odds=
+                        COALESCE(
+                            ?,
+                            home_odds
+                        ),
+                    draw_odds=
+                        COALESCE(
+                            ?,
+                            draw_odds
+                        ),
+                    away_odds=
+                        COALESCE(
+                            ?,
+                            away_odds
+                        ),
+                    over25_odds=
+                        COALESCE(
+                            ?,
+                            over25_odds
+                        ),
+                    under25_odds=
+                        COALESCE(
+                            ?,
+                            under25_odds
+                        ),
+                    odds_source=?,
+                    odds_updated=?,
+                    raw_json=?,
+                    updated_at=?
+                WHERE event_key=?
+                """,
+                values + (
+                    key,
+                ),
+            )
+
+        else:
+
+            con.execute(
+                """
+                INSERT INTO matches
+                (
+                    event_key,
+                    source,
+                    sport,
+                    league,
+                    country,
+                    match_date,
+                    home_team,
+                    away_team,
+                    home_score,
+                    away_score,
+                    status,
+                    result,
+                    home_odds,
+                    draw_odds,
+                    away_odds,
+                    over25_odds,
+                    under25_odds,
+                    odds_source,
+                    odds_updated,
+                    raw_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES
+                (
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?
+                )
+                """,
+                (
+                    key,
+                ) + values,
+            )
+
+        con.commit()
+
+        con.close()
+
+        return True
+
+    except Exception as e:
+
+        write_log(
+            "DATABASE",
+            False,
+            0,
+            0,
+            traceback.format_exc(),
+        )
+
+        return False
+
+
+# ============================================================
+# 안전 수집
+# ============================================================
+
+def safe_collect(
+    function,
+    *args,
+    source_name="unknown",
+    **kwargs,
+):
+
+    try:
+
+        rows = function(
+            *args,
+            **kwargs
+        )
+
+        if rows is None:
+
+            return []
+
+        return rows
+
+    except Exception:
+
+        write_log(
+            source_name,
+            False,
+            0,
+            0,
+            traceback.format_exc(),
+        )
+
+        return []
+
+
+# ============================================================
+# 전체 수집
+# ============================================================
+
+def collect_all(
+    selected_sports
+):
+
+    total = 0
+
+    errors = []
+
+    progress = st.progress(
+        0
+    )
+
+    total_steps = (
+        len(selected_sports) * 2
+    )
+
+    current_step = 0
+
+    for sport in selected_sports:
+
+        # ----------------------------------------------------
+        # SportScore
+        # ----------------------------------------------------
+
+        rows = safe_collect(
+            fetch_sportscore,
+            sport,
+            100,
+            source_name=
+            f"SportScore/{sport}",
+        )
+
+        for row in rows:
+
+            try:
+
+                row["result"] = (
+                    calculate_result(
+                        row.get(
+                            "home_score"
+                        ),
+                        row.get(
+                            "away_score"
+                        ),
+                    )
+                )
+
+                if save_match(row):
+
+                    total += 1
+
+            except Exception as e:
+
+                errors.append(
+                    str(e)
+                )
+
+                write_log(
+                    f"SportScore/{sport}",
+                    False,
+                    0,
+                    0,
+                    str(e),
+                )
+
+                continue
+
+        current_step += 1
+
+        progress.progress(
+            min(
+                current_step
+                /
+                max(
+                    total_steps,
+                    1
+                ),
+                1.0,
+            )
+        )
+
+        # ----------------------------------------------------
+        # SportSRC
+        # ----------------------------------------------------
+
+        rows = safe_collect(
+            fetch_sportsrc,
+            sport,
+            source_name=
+            f"SportSRC/{sport}",
+        )
+
+        for row in rows:
+
+            try:
+
+                row["result"] = (
+                    calculate_result(
+                        row.get(
+                            "home_score"
+                        ),
+                        row.get(
+                            "away_score"
+                        ),
+                    )
+                )
+
+                if save_match(row):
+
+                    total += 1
+
+            except Exception as e:
+
+                errors.append(
+                    str(e)
+                )
+
+                continue
+
+        current_step += 1
+
+        progress.progress(
+            min(
+                current_step
+                /
+                max(
+                    total_steps,
+                    1
+                ),
+                1.0,
+            )
+        )
+
+    progress.empty()
+
+    return total, errors
+
+
+# ============================================================
+# DB 읽기
 # ============================================================
 
 def load_matches():
 
-    con = get_connection()
+    try:
 
-    df = pd.read_sql_query(
-        """
-        SELECT *
-        FROM matches
-        ORDER BY match_date
-        """,
-        con,
-    )
+        con = get_connection()
 
-    con.close()
+        df = pd.read_sql_query(
+            """
+            SELECT *
+            FROM matches
+            ORDER BY match_date
+            """,
+            con,
+        )
+
+        con.close()
+
+    except Exception:
+
+        return pd.DataFrame()
 
     if df.empty:
+
         return df
 
     df["match_date"] = pd.to_datetime(
         df["match_date"],
         errors="coerce",
-        utc=True,
     )
 
     df["result"] = df.apply(
-        lambda x:
-        x["result"]
-        if clean_text(x["result"])
+        lambda row:
+        row["result"]
+        if clean_text(
+            row["result"]
+        )
         else calculate_result(
-            x["home_score"],
-            x["away_score"],
+            row["home_score"],
+            row["away_score"],
         ),
         axis=1,
     )
@@ -1414,275 +1667,59 @@ def load_matches():
 
 
 # ============================================================
-# IMPORT CSV
+# No-Vig
 # ============================================================
 
-COLUMN_MAP = {
-
-    "Date": "match_date",
-    "date": "match_date",
-
-    "HomeTeam": "home_team",
-    "home": "home_team",
-    "home_team": "home_team",
-
-    "AwayTeam": "away_team",
-    "away": "away_team",
-    "away_team": "away_team",
-
-    "FTHG": "home_score",
-    "FTAG": "away_score",
-    "FTR": "result",
-
-    "B365H": "home_odds",
-    "B365D": "draw_odds",
-    "B365A": "away_odds",
-
-    "AvgH": "home_odds",
-    "AvgD": "draw_odds",
-    "AvgA": "away_odds",
-
-    "Over25": "over25_odds",
-    "Under25": "under25_odds",
-
-    "B365>2.5": "over25_odds",
-    "B365<2.5": "under25_odds",
-
-}
-
-
-def normalize_dataframe(
-    df,
-    source,
+def no_vig_probability(
+    home,
+    draw,
+    away,
 ):
 
-    rename = {}
-
-    for col in df.columns:
-
-        if col in COLUMN_MAP:
-
-            rename[col] = COLUMN_MAP[col]
-
-    df = df.rename(
-        columns=rename
-    )
-
-    required = [
-        "match_date",
-        "home_team",
-        "away_team",
+    values = [
+        safe_float(home),
+        safe_float(draw),
+        safe_float(away),
     ]
 
-    for col in required:
+    inv = []
 
-        if col not in df.columns:
-            df[col] = ""
+    for value in values:
 
-    for col in [
-        "home_score",
-        "away_score",
-        "home_odds",
-        "draw_odds",
-        "away_odds",
-        "over25_odds",
-        "under25_odds",
-    ]:
-
-        if col not in df.columns:
-            df[col] = np.nan
-
-        df[col] = pd.to_numeric(
-            df[col],
-            errors="coerce",
-        )
-
-    df["match_date"] = pd.to_datetime(
-        df["match_date"],
-        errors="coerce",
-    )
-
-    if "result" not in df.columns:
-
-        df["result"] = df.apply(
-            lambda x:
-            calculate_result(
-                x["home_score"],
-                x["away_score"],
-            ),
-            axis=1,
-        )
-
-    return df
-
-
-def import_dataframe(
-    df,
-    source,
-):
-
-    df = normalize_dataframe(
-        df,
-        source,
-    )
-
-    count = 0
-
-    for _, row in df.iterrows():
-
-        if not clean_text(
-            row["home_team"]
+        if (
+            value is None
+            or value <= 1
         ):
-            continue
 
-        if not clean_text(
-            row["away_team"]
-        ):
-            continue
+            inv.append(0)
 
-        match = {
+        else:
 
-            "source":
-                source,
+            inv.append(
+                1 / value
+            )
 
-            "sport":
-                "Football",
+    total = sum(inv)
 
-            "league":
-                "",
+    if total <= 0:
 
-            "country":
-                "",
+        return [
+            0,
+            0,
+            0
+        ]
 
-            "match_date":
-                str(
-                    row["match_date"]
-                ),
-
-            "home_team":
-                row["home_team"],
-
-            "away_team":
-                row["away_team"],
-
-            "home_score":
-                safe_float(
-                    row["home_score"]
-                ),
-
-            "away_score":
-                safe_float(
-                    row["away_score"]
-                ),
-
-            "status":
-                "finished",
-
-            "result":
-                row["result"],
-
-            "home_odds":
-                safe_float(
-                    row["home_odds"]
-                ),
-
-            "draw_odds":
-                safe_float(
-                    row["draw_odds"]
-                ),
-
-            "away_odds":
-                safe_float(
-                    row["away_odds"]
-                ),
-
-            "over25_odds":
-                safe_float(
-                    row["over25_odds"]
-                ),
-
-            "under25_odds":
-                safe_float(
-                    row["under25_odds"]
-                ),
-
-            "raw_json":
-                "",
-
-        }
-
-        if save_match(
-            match
-        ):
-            count += 1
-
-    return count
+    return [
+        x / total
+        for x in inv
+    ]
 
 
 # ============================================================
-# MARKET PROBABILITY
+# EV
 # ============================================================
 
-def market_probabilities(
-    h,
-    d,
-    a,
-):
-
-    return no_vig_probability(
-        h,
-        d,
-        a,
-    )
-
-
-# ============================================================
-# ODDS BUCKET
-# ============================================================
-
-def odds_bucket(
-    odds,
-):
-
-    x = safe_float(
-        odds
-    )
-
-    if x is None:
-        return "N/A"
-
-    if x < 1.30:
-        return "1.01-1.29"
-
-    if x < 1.40:
-        return "1.30-1.39"
-
-    if x < 1.50:
-        return "1.40-1.49"
-
-    if x < 1.60:
-        return "1.50-1.59"
-
-    if x < 1.70:
-        return "1.60-1.69"
-
-    if x < 1.80:
-        return "1.70-1.79"
-
-    if x < 2.00:
-        return "1.80-1.99"
-
-    if x < 2.50:
-        return "2.00-2.49"
-
-    return "2.50+"
-
-
-# ============================================================
-# VALUE CALCULATION
-# ============================================================
-
-def expected_value(
+def calculate_ev(
     probability,
     odds,
 ):
@@ -1695,10 +1732,12 @@ def expected_value(
         odds
     )
 
-    if p is None or o is None:
-        return None
+    if (
+        p is None
+        or o is None
+        or o <= 1
+    ):
 
-    if o <= 1:
         return None
 
     return (
@@ -1707,7 +1746,58 @@ def expected_value(
 
 
 # ============================================================
-# BACKTEST
+# 배당구간
+# ============================================================
+
+def odds_bucket(
+    odds
+):
+
+    value = safe_float(
+        odds
+    )
+
+    if value is None:
+
+        return "N/A"
+
+    if value < 1.30:
+
+        return "1.01~1.29"
+
+    if value < 1.40:
+
+        return "1.30~1.39"
+
+    if value < 1.50:
+
+        return "1.40~1.49"
+
+    if value < 1.60:
+
+        return "1.50~1.59"
+
+    if value < 1.70:
+
+        return "1.60~1.69"
+
+    if value < 1.80:
+
+        return "1.70~1.79"
+
+    if value < 2.00:
+
+        return "1.80~1.99"
+
+    if value < 2.50:
+
+        return "2.00~2.49"
+
+    return "2.50+"
+
+
+# ============================================================
+# 백테스트
 # ============================================================
 
 def run_backtest(
@@ -1718,6 +1808,7 @@ def run_backtest(
 ):
 
     if df.empty:
+
         return pd.DataFrame()
 
     data = df.copy()
@@ -1732,18 +1823,22 @@ def run_backtest(
 
     data = data[
         data["result"].isin(
-            ["H", "D", "A"]
+            [
+                "H",
+                "D",
+                "A",
+            ]
         )
     ]
 
     rows = []
 
-    for _, r in data.iterrows():
+    for _, row in data.iterrows():
 
-        probs = market_probabilities(
-            r["home_odds"],
-            r["draw_odds"],
-            r["away_odds"],
+        probs = no_vig_probability(
+            row["home_odds"],
+            row["draw_odds"],
+            row["away_odds"],
         )
 
         labels = [
@@ -1753,24 +1848,31 @@ def run_backtest(
         ]
 
         odds = [
-            r["home_odds"],
-            r["draw_odds"],
-            r["away_odds"],
+            row["home_odds"],
+            row["draw_odds"],
+            row["away_odds"],
         ]
 
-        idx = int(
-            np.argmax(probs)
+        index = int(
+            np.argmax(
+                probs
+            )
         )
 
-        prediction = labels[idx]
+        prediction = (
+            labels[index]
+        )
 
-        probability = probs[idx]
+        probability = (
+            probs[index]
+        )
 
         selected_odds = safe_float(
-            odds[idx]
+            odds[index]
         )
 
         if selected_odds is None:
+
             continue
 
         if not (
@@ -1778,15 +1880,21 @@ def run_backtest(
             <= selected_odds
             <= max_odds
         ):
+
             continue
 
-        if probability < min_probability:
+        if (
+            probability
+            <
+            min_probability
+        ):
+
             continue
 
         hit = (
             prediction
             ==
-            r["result"]
+            row["result"]
         )
 
         profit = (
@@ -1795,7 +1903,7 @@ def run_backtest(
             else -1
         )
 
-        ev = expected_value(
+        ev = calculate_ev(
             probability,
             selected_odds,
         )
@@ -1803,19 +1911,19 @@ def run_backtest(
         rows.append({
 
             "date":
-                r["match_date"],
+                row["match_date"],
 
             "sport":
-                r["sport"],
+                row["sport"],
 
             "league":
-                r["league"],
+                row["league"],
 
             "home":
-                r["home_team"],
+                row["home_team"],
 
             "away":
-                r["away_team"],
+                row["away_team"],
 
             "prediction":
                 prediction,
@@ -1830,7 +1938,7 @@ def run_backtest(
                 ev,
 
             "result":
-                r["result"],
+                row["result"],
 
             "hit":
                 hit,
@@ -1845,6 +1953,7 @@ def run_backtest(
     )
 
     if result.empty:
+
         return result
 
     result = result.sort_values(
@@ -1874,21 +1983,22 @@ def run_backtest(
             1,
             len(result) + 1
         )
-        * 100
+        *
+        100
     )
 
     return result
 
 
 # ============================================================
-# METRICS
+# 통계
 # ============================================================
 
-def metrics(
-    bt,
+def calculate_metrics(
+    data
 ):
 
-    if bt.empty:
+    if data.empty:
 
         return {
 
@@ -1903,14 +2013,14 @@ def metrics(
 
         }
 
-    games = len(bt)
+    games = len(data)
 
     hits = int(
-        bt["hit"].sum()
+        data["hit"].sum()
     )
 
     profit = float(
-        bt["profit"].sum()
+        data["profit"].sum()
     )
 
     roi = (
@@ -1923,16 +2033,8 @@ def metrics(
 
     max_drawdown = abs(
         float(
-            bt["drawdown"].min()
+            data["drawdown"].min()
         )
-    )
-
-    avg_odds = float(
-        bt["odds"].mean()
-    )
-
-    avg_ev = float(
-        bt["EV"].mean()
     )
 
     return {
@@ -1944,7 +2046,11 @@ def metrics(
             hits,
 
         "hit_rate":
-            hits / games * 100,
+            hits
+            /
+            games
+            *
+            100,
 
         "profit":
             profit,
@@ -1956,62 +2062,70 @@ def metrics(
             max_drawdown,
 
         "avg_odds":
-            avg_odds,
+            float(
+                data["odds"].mean()
+            ),
 
         "avg_ev":
-            avg_ev,
+            float(
+                data["EV"].mean()
+            ),
 
     }
 
 
 # ============================================================
-# STREAK
+# 연속 적중 / 실패
 # ============================================================
 
 def streak_stats(
-    bt,
+    data
 ):
 
-    if bt.empty:
+    if data.empty:
+
         return 0, 0
+
+    current_win = 0
+    current_loss = 0
 
     max_win = 0
     max_loss = 0
 
-    win = 0
-    loss = 0
-
-    for hit in bt["hit"]:
+    for hit in data["hit"]:
 
         if hit:
 
-            win += 1
-            loss = 0
+            current_win += 1
+            current_loss = 0
 
         else:
 
-            loss += 1
-            win = 0
+            current_loss += 1
+            current_win = 0
 
         max_win = max(
             max_win,
-            win,
+            current_win,
         )
 
         max_loss = max(
             max_loss,
-            loss,
+            current_loss,
         )
 
-    return max_win, max_loss
+    return (
+        max_win,
+        max_loss,
+    )
 
 
 # ============================================================
-# TIME SPLIT
+# 연도분리
 # ============================================================
 
-def time_split(
-    df,
+def split_periods(
+    df
 ):
 
     if df.empty:
@@ -2022,26 +2136,26 @@ def time_split(
             df,
         )
 
-    x = df.copy()
+    temp = df.copy()
 
-    x["year"] = (
+    temp["year"] = (
         pd.to_datetime(
-            x["match_date"],
+            temp["match_date"],
             errors="coerce",
         )
         .dt.year
     )
 
-    train = x[
-        x["year"] <= 2024
+    train = temp[
+        temp["year"] <= 2024
     ]
 
-    validation = x[
-        x["year"] == 2025
+    validation = temp[
+        temp["year"] == 2025
     ]
 
-    test = x[
-        x["year"] >= 2026
+    test = temp[
+        temp["year"] >= 2026
     ]
 
     return (
@@ -2052,263 +2166,431 @@ def time_split(
 
 
 # ============================================================
-# VALUE FILTER
+# CSV Import
 # ============================================================
 
-def value_filter(
-    bt,
-    min_ev,
+COLUMN_MAP = {
+
+    "Date":
+        "match_date",
+
+    "date":
+        "match_date",
+
+    "HomeTeam":
+        "home_team",
+
+    "home":
+        "home_team",
+
+    "home_team":
+        "home_team",
+
+    "AwayTeam":
+        "away_team",
+
+    "away":
+        "away_team",
+
+    "away_team":
+        "away_team",
+
+    "FTHG":
+        "home_score",
+
+    "FTAG":
+        "away_score",
+
+    "FTR":
+        "result",
+
+    "B365H":
+        "home_odds",
+
+    "B365D":
+        "draw_odds",
+
+    "B365A":
+        "away_odds",
+
+    "AvgH":
+        "home_odds",
+
+    "AvgD":
+        "draw_odds",
+
+    "AvgA":
+        "away_odds",
+
+}
+
+
+def import_csv(
+    uploaded_file
 ):
 
-    if bt.empty:
-        return bt
+    try:
 
-    return bt[
-        bt["EV"]
-        >= min_ev
-    ].copy()
+        try:
 
+            df = pd.read_csv(
+                uploaded_file,
+                encoding="utf-8",
+            )
 
-# ============================================================
-# SOURCE STATUS
-# ============================================================
+        except Exception:
 
-def source_status():
+            uploaded_file.seek(
+                0
+            )
 
-    con = get_connection()
+            df = pd.read_csv(
+                uploaded_file,
+                encoding="cp949",
+            )
 
-    df = pd.read_sql_query(
-        """
-        SELECT
-            source,
-            MAX(created_at) AS last_time,
-            SUM(success) AS successes,
-            COUNT(*) AS calls,
-            SUM(rows) AS rows
-        FROM source_log
-        GROUP BY source
-        ORDER BY source
-        """,
-        con,
-    )
+        rename = {}
 
-    con.close()
+        for col in df.columns:
 
-    return df
+            if col in COLUMN_MAP:
 
+                rename[col] = (
+                    COLUMN_MAP[col]
+                )
 
-# ============================================================
-# AUTO COLLECT
-# ============================================================
-
-def collect_all(
-    sports,
-):
-
-    total = 0
-
-    for sport in sports:
-
-        rows = fetch_sportscore(
-            sport,
-            50,
+        df = df.rename(
+            columns=rename
         )
 
-        for match in rows:
+        required = [
+            "match_date",
+            "home_team",
+            "away_team",
+        ]
 
-            match["result"] = (
-                calculate_result(
-                    match.get(
-                        "home_score"
-                    ),
-                    match.get(
-                        "away_score"
-                    ),
-                )
+        for col in required:
+
+            if col not in df.columns:
+
+                df[col] = ""
+
+        numeric_cols = [
+
+            "home_score",
+            "away_score",
+            "home_odds",
+            "draw_odds",
+            "away_odds",
+            "over25_odds",
+            "under25_odds",
+
+        ]
+
+        for col in numeric_cols:
+
+            if col not in df.columns:
+
+                df[col] = np.nan
+
+            df[col] = pd.to_numeric(
+                df[col],
+                errors="coerce",
             )
+
+        count = 0
+
+        for _, row in df.iterrows():
+
+            home = clean_text(
+                row[
+                    "home_team"
+                ]
+            )
+
+            away = clean_text(
+                row[
+                    "away_team"
+                ]
+            )
+
+            if not home or not away:
+
+                continue
+
+            match = {
+
+                "source":
+                    "CSV",
+
+                "sport":
+                    "Football",
+
+                "league":
+                    "",
+
+                "country":
+                    "",
+
+                "match_date":
+                    str(
+                        row[
+                            "match_date"
+                        ]
+                    ),
+
+                "home_team":
+                    home,
+
+                "away_team":
+                    away,
+
+                "home_score":
+                    safe_float(
+                        row[
+                            "home_score"
+                        ]
+                    ),
+
+                "away_score":
+                    safe_float(
+                        row[
+                            "away_score"
+                        ]
+                    ),
+
+                "status":
+                    "finished",
+
+                "result":
+                    clean_text(
+                        row.get(
+                            "result",
+                            ""
+                        )
+                    ),
+
+                "home_odds":
+                    safe_float(
+                        row[
+                            "home_odds"
+                        ]
+                    ),
+
+                "draw_odds":
+                    safe_float(
+                        row[
+                            "draw_odds"
+                        ]
+                    ),
+
+                "away_odds":
+                    safe_float(
+                        row[
+                            "away_odds"
+                        ]
+                    ),
+
+                "over25_odds":
+                    safe_float(
+                        row[
+                            "over25_odds"
+                        ]
+                    ),
+
+                "under25_odds":
+                    safe_float(
+                        row[
+                            "under25_odds"
+                        ]
+                    ),
+
+            }
 
             if save_match(
                 match
             ):
 
-                total += 1
+                count += 1
 
-    # SportSRC is supplemental.
-    for sport in sports:
+        return count, None
 
-        rows = fetch_sportsrc(
-            sport
+    except Exception as e:
+
+        return (
+            0,
+            traceback.format_exc()
         )
-
-        for match in rows:
-
-            match["result"] = (
-                calculate_result(
-                    match.get(
-                        "home_score"
-                    ),
-                    match.get(
-                        "away_score"
-                    ),
-                )
-            )
-
-            save_match(
-                match
-            )
-
-    return total
 
 
 # ============================================================
-# SIDEBAR
+# UI Sidebar
 # ============================================================
 
 st.sidebar.title(
     "⚙️ 설정"
 )
 
-st.sidebar.markdown(
-    """
-**API 키 입력 불필요**
-
-공개 무료 데이터만 사용합니다.
-"""
+st.sidebar.info(
+    "API 키 입력 없이 공개 데이터만 사용"
 )
 
-selected_sports = st.sidebar.multiselect(
-    "자동수집 종목",
-    SPORTSCORE_SPORTS,
-    default=SPORTSCORE_SPORTS,
-)
-
-refresh = st.sidebar.button(
-    "🔄 데이터 새로 수집"
-)
-
-if refresh:
-
-    with st.spinner(
-        "공개 데이터 수집 중..."
-    ):
-
-        count = collect_all(
-            selected_sports
-        )
-
-    st.sidebar.success(
-        f"{count:,}건 처리 완료"
+selected_sports = (
+    st.sidebar.multiselect(
+        "수집 종목",
+        SPORTS,
+        default=SPORTS,
     )
+)
 
 
 # ============================================================
-# CSV UPLOAD
+# 수집 버튼
+# ============================================================
+
+st.sidebar.divider()
+
+if st.sidebar.button(
+    "🔄 전체 데이터 수집",
+    use_container_width=True,
+):
+
+    with st.spinner(
+        "데이터를 안전하게 수집하는 중..."
+    ):
+
+        total, errors = (
+            collect_all(
+                selected_sports
+            )
+        )
+
+    if errors:
+
+        st.sidebar.warning(
+            f"{total:,}건 저장 / "
+            f"{len(errors)}건 오류"
+        )
+
+    else:
+
+        st.sidebar.success(
+            f"{total:,}건 처리 완료"
+        )
+
+    st.rerun()
+
+
+# ============================================================
+# CSV
 # ============================================================
 
 st.sidebar.divider()
 
 st.sidebar.subheader(
-    "📂 과거 데이터"
+    "📂 과거 경기 데이터"
 )
 
-files = st.sidebar.file_uploader(
-    "CSV 추가",
-    type=["csv"],
-    accept_multiple_files=True,
+uploaded_files = (
+    st.sidebar.file_uploader(
+        "CSV 업로드",
+        type=["csv"],
+        accept_multiple_files=True,
+    )
 )
 
-if files:
+if uploaded_files:
 
-    for file in files:
+    for file in uploaded_files:
 
-        try:
+        count, error = (
+            import_csv(file)
+        )
 
-            try:
+        if error:
 
-                temp = pd.read_csv(
-                    file,
-                    encoding="utf-8",
-                )
-
-            except:
-
-                file.seek(0)
-
-                temp = pd.read_csv(
-                    file,
-                    encoding="latin1",
-                )
-
-            inserted = import_dataframe(
-                temp,
-                file.name,
+            st.sidebar.error(
+                f"{file.name} 오류"
             )
+
+        else:
 
             st.sidebar.success(
                 f"{file.name}: "
-                f"{inserted:,}건"
-            )
-
-        except Exception as e:
-
-            st.sidebar.error(
-                f"{file.name}: {e}"
+                f"{count:,}건"
             )
 
 
 # ============================================================
-# ANALYSIS SETTINGS
+# 분석 설정
 # ============================================================
 
 st.sidebar.divider()
 
 st.sidebar.subheader(
-    "📊 백테스트"
+    "📊 분석 조건"
 )
 
-min_odds = st.sidebar.number_input(
-    "최소 배당",
-    min_value=1.01,
-    max_value=20.0,
-    value=1.40,
-    step=0.01,
+min_odds = (
+    st.sidebar.number_input(
+        "최소 배당",
+        min_value=1.01,
+        max_value=20.0,
+        value=1.40,
+        step=0.01,
+    )
 )
 
-max_odds = st.sidebar.number_input(
-    "최대 배당",
-    min_value=1.02,
-    max_value=50.0,
-    value=2.50,
-    step=0.01,
+max_odds = (
+    st.sidebar.number_input(
+        "최대 배당",
+        min_value=1.02,
+        max_value=50.0,
+        value=2.50,
+        step=0.01,
+    )
 )
 
-min_probability = st.sidebar.slider(
-    "최소 시장확률",
-    0.30,
-    0.90,
-    0.55,
-    0.01,
+min_probability = (
+    st.sidebar.slider(
+        "최소 확률",
+        0.30,
+        0.90,
+        0.55,
+        0.01,
+    )
 )
 
-min_ev = st.sidebar.slider(
-    "최소 EV",
-    -0.10,
-    0.30,
-    0.03,
-    0.01,
+min_ev = (
+    st.sidebar.slider(
+        "최소 EV",
+        -0.20,
+        0.30,
+        0.03,
+        0.01,
+    )
 )
 
-min_sample = st.sidebar.number_input(
-    "최소 표본",
-    10,
-    10000,
-    300,
-    10,
+min_sample = (
+    st.sidebar.number_input(
+        "최소 표본",
+        min_value=10,
+        max_value=100000,
+        value=300,
+        step=10,
+    )
 )
 
 
 # ============================================================
-# MAIN
+# 데이터
+# ============================================================
+
+df = load_matches()
+
+
+# ============================================================
+# HEADER
 # ============================================================
 
 st.title(
@@ -2316,71 +2598,76 @@ st.title(
 )
 
 st.caption(
-    "무료 공개 데이터 · 경기결과 · 배당 · "
-    "백테스트 · ROI · Value 분석"
+    "무료 공개 스포츠 데이터 · "
+    "배당 · 결과 · EV · ROI · 백테스트"
 )
 
 
-df = load_matches()
-
-
 # ============================================================
-# TOP METRICS
+# 기본 지표
 # ============================================================
 
 if df.empty:
 
     st.warning(
-        "아직 데이터가 없습니다. "
-        "왼쪽의 '데이터 새로 수집'을 누르거나 "
-        "CSV 파일을 업로드하세요."
+        "데이터가 없습니다. "
+        "왼쪽에서 데이터를 수집하거나 "
+        "CSV를 업로드하세요."
     )
 
 else:
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5 = (
+        st.columns(5)
+    )
 
     c1.metric(
         "전체 경기",
-        f"{len(df):,}"
+        f"{len(df):,}",
     )
 
     c2.metric(
         "종목",
-        df["sport"]
-        .nunique()
+        df[
+            "sport"
+        ].nunique(),
     )
 
     c3.metric(
         "리그",
-        df["league"]
-        .replace("", np.nan)
-        .nunique()
+        df[
+            "league"
+        ]
+        .replace(
+            "",
+            np.nan
+        )
+        .nunique(),
     )
 
     c4.metric(
-        "결과 보유",
-        f"{df['result'].notna().sum():,}"
+        "결과",
+        f"{df['result'].notna().sum():,}",
     )
 
     c5.metric(
-        "배당 보유",
-        f"{df['home_odds'].notna().sum():,}"
+        "배당",
+        f"{df['home_odds'].notna().sum():,}",
     )
 
 
 # ============================================================
-# TABS
+# TAB
 # ============================================================
 
 tabs = st.tabs([
-    "🔥 오늘 분석",
+    "🔥 경기분석",
     "📊 백테스트",
     "💰 ROI",
     "📈 배당통계",
     "🏆 종목/리그",
     "🗄️ 데이터",
-    "⚙️ 출처",
+    "⚙️ 수집상태",
 ])
 
 
@@ -2391,41 +2678,49 @@ tabs = st.tabs([
 with tabs[0]:
 
     st.subheader(
-        "🔥 현재 데이터 분석"
+        "🔥 VALUE 경기"
     )
 
     if df.empty:
 
         st.info(
-            "경기 데이터가 없습니다."
+            "데이터가 없습니다."
         )
 
     else:
 
-        current = df.copy()
+        work = df.copy()
 
-        current = current[
-            current[
+        work = work[
+            work[
                 "home_odds"
             ].notna()
             &
-            current[
+            work[
                 "draw_odds"
             ].notna()
             &
-            current[
+            work[
                 "away_odds"
             ].notna()
         ]
 
         rows = []
 
-        for _, r in current.iterrows():
+        for _, row in work.iterrows():
 
-            probs = market_probabilities(
-                r["home_odds"],
-                r["draw_odds"],
-                r["away_odds"],
+            probs = (
+                no_vig_probability(
+                    row[
+                        "home_odds"
+                    ],
+                    row[
+                        "draw_odds"
+                    ],
+                    row[
+                        "away_odds"
+                    ],
+                )
             )
 
             labels = [
@@ -2435,50 +2730,70 @@ with tabs[0]:
             ]
 
             odds = [
-                r["home_odds"],
-                r["draw_odds"],
-                r["away_odds"],
+                row[
+                    "home_odds"
+                ],
+                row[
+                    "draw_odds"
+                ],
+                row[
+                    "away_odds"
+                ],
             ]
 
-            idx = int(
-                np.argmax(probs)
+            index = int(
+                np.argmax(
+                    probs
+                )
             )
 
-            p = probs[idx]
-
-            o = safe_float(
-                odds[idx]
+            probability = (
+                probs[index]
             )
 
-            ev = expected_value(
-                p,
-                o,
+            selected_odds = (
+                safe_float(
+                    odds[index]
+                )
+            )
+
+            ev = calculate_ev(
+                probability,
+                selected_odds,
             )
 
             rows.append({
 
                 "시간":
-                    r["match_date"],
+                    row[
+                        "match_date"
+                    ],
 
                 "종목":
-                    r["sport"],
+                    row[
+                        "sport"
+                    ],
 
                 "리그":
-                    r["league"],
+                    row[
+                        "league"
+                    ],
 
                 "경기":
-                    f"{r['home_team']} "
-                    f"vs "
-                    f"{r['away_team']}",
+                    (
+                        f"{row['home_team']}"
+                        f" vs "
+                        f"{row['away_team']}"
+                    ),
 
                 "추천":
-                    labels[idx],
+                    labels[index],
 
                 "확률":
-                    p,
+                    probability,
 
                 "배당":
-                    o,
+                    selected_odds,
 
                 "EV":
                     ev,
@@ -2492,60 +2807,76 @@ with tabs[0]:
         if not analysis.empty:
 
             analysis = analysis[
-                analysis["EV"]
+                analysis[
+                    "EV"
+                ].notna()
+            ]
+
+            analysis = analysis[
+                analysis[
+                    "EV"
+                ]
                 >= min_ev
             ]
 
-            analysis = analysis.sort_values(
-                [
-                    "EV",
-                    "확률",
-                ],
-                ascending=False,
+            analysis = (
+                analysis
+                .sort_values(
+                    [
+                        "EV",
+                        "확률",
+                    ],
+                    ascending=False,
+                )
+                .head(100)
             )
 
-            analysis["판정"] = np.where(
-                analysis["EV"] > 0.10,
-                "🔥 강한 VALUE",
-                np.where(
-                    analysis["EV"] > 0.03,
-                    "🟢 VALUE",
-                    "⚪ 일반",
-                ),
-            )
+            if not analysis.empty:
 
-            analysis["확률"] *= 100
-            analysis["EV"] *= 100
+                analysis["판정"] = (
+                    np.where(
+                        analysis[
+                            "EV"
+                        ] >= 0.10,
+                        "🔥 강한 VALUE",
+                        np.where(
+                            analysis[
+                                "EV"
+                            ] >= 0.03,
+                            "🟢 VALUE",
+                            "⚪ 일반",
+                        ),
+                    )
+                )
 
-            st.dataframe(
-                analysis.head(100)
-                .style.format({
-                    "확률":
-                        "{:.2f}%",
-                    "배당":
-                        "{:.2f}",
-                    "EV":
-                        "{:+.2f}%",
-                }),
-                use_container_width=True,
-                hide_index=True,
-            )
+                st.dataframe(
+                    analysis.style.format({
+                        "확률":
+                            "{:.2%}",
+                        "배당":
+                            "{:.2f}",
+                        "EV":
+                            "{:+.2%}",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
-        else:
+            else:
 
-            st.info(
-                "현재 조건을 만족하는 VALUE 경기가 없습니다."
-            )
+                st.info(
+                    "현재 조건을 만족하는 경기가 없습니다."
+                )
 
 
 # ============================================================
-# TAB 2 BACKTEST
+# TAB 2
 # ============================================================
 
 with tabs[1]:
 
     st.subheader(
-        "📊 전체 백테스트"
+        "📊 백테스트"
     )
 
     bt = run_backtest(
@@ -2563,14 +2894,16 @@ with tabs[1]:
 
     else:
 
-        m = metrics(bt)
+        m = calculate_metrics(
+            bt
+        )
 
         c1, c2, c3, c4, c5, c6 = (
             st.columns(6)
         )
 
         c1.metric(
-            "표본",
+            "경기",
             f"{m['games']:,}"
         )
 
@@ -2581,12 +2914,12 @@ with tabs[1]:
 
         c3.metric(
             "ROI",
-            f"{m['roi']:.2f}%"
+            f"{m['roi']:+.2f}%"
         )
 
         c4.metric(
             "수익",
-            f"{m['profit']:.2f}u"
+            f"{m['profit']:+.2f}u"
         )
 
         c5.metric(
@@ -2606,8 +2939,7 @@ with tabs[1]:
         ):
 
             st.success(
-                "🟢 현재 조건은 "
-                "백테스트상 양의 ROI입니다."
+                "🟢 백테스트 양의 ROI"
             )
 
         elif (
@@ -2616,17 +2948,17 @@ with tabs[1]:
         ):
 
             st.warning(
-                "⚠️ 표본이 부족합니다."
+                "⚠️ 표본 부족"
             )
 
         else:
 
             st.error(
-                "🔴 현재 조건의 ROI가 음수입니다."
+                "🔴 현재 조건 ROI 음수"
             )
 
         st.subheader(
-            "📈 누적 수익"
+            "누적 수익"
         )
 
         chart = bt[
@@ -2660,167 +2992,102 @@ with tabs[1]:
 
 
 # ============================================================
-# TAB 3 ROI
+# TAB 3
 # ============================================================
 
 with tabs[2]:
 
     st.subheader(
-        "💰 수익성 검증"
+        "💰 기간별 ROI 검증"
     )
 
-    if df.empty:
+    train, validation, test = (
+        split_periods(df)
+    )
 
-        st.info(
-            "데이터가 없습니다."
+    periods = [
+        (
+            "2020~2024",
+            train,
+        ),
+        (
+            "2025",
+            validation,
+        ),
+        (
+            "2026~",
+            test,
+        ),
+    ]
+
+    result_rows = []
+
+    for name, part in periods:
+
+        x = run_backtest(
+            part,
+            min_odds,
+            max_odds,
+            min_probability,
         )
 
-    else:
-
-        train, validation, test = (
-            time_split(df)
+        m = calculate_metrics(
+            x
         )
 
-        sections = [
-            (
-                "2020~2024 학습",
-                train,
-            ),
-            (
-                "2025 검증",
-                validation,
-            ),
-            (
-                "2026 이후 테스트",
-                test,
-            ),
-        ]
+        result_rows.append({
 
-        result_rows = []
+            "기간":
+                name,
 
-        for name, part in sections:
+            "경기":
+                m["games"],
 
-            x = run_backtest(
-                part,
-                min_odds,
-                max_odds,
-                min_probability,
-            )
+            "적중":
+                m["hits"],
 
-            mm = metrics(x)
+            "적중률":
+                m["hit_rate"],
 
-            result_rows.append({
+            "ROI":
+                m["roi"],
 
-                "구간":
-                    name,
+            "수익":
+                m["profit"],
 
-                "경기수":
-                    mm["games"],
+            "최대낙폭":
+                m["max_drawdown"],
 
-                "적중":
-                    mm["hits"],
+        })
 
-                "적중률":
-                    mm["hit_rate"],
+    result = pd.DataFrame(
+        result_rows
+    )
 
-                "ROI":
-                    mm["roi"],
-
-                "수익":
-                    mm["profit"],
-
-                "최대낙폭":
-                    mm["max_drawdown"],
-
-            })
-
-        table = pd.DataFrame(
-            result_rows
-        )
-
-        st.dataframe(
-            table.style.format({
-                "적중률":
-                    "{:.2f}%",
-                "ROI":
-                    "{:+.2f}%",
-                "수익":
-                    "{:+.2f}",
-                "최대낙폭":
-                    "{:.2f}",
-            }),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        # VALUE only
-        value_bt = value_filter(
-            run_backtest(
-                df,
-                min_odds,
-                max_odds,
-                min_probability,
-            ),
-            min_ev,
-        )
-
-        vm = metrics(
-            value_bt
-        )
-
-        st.subheader(
-            "🔥 VALUE 조건"
-        )
-
-        v1, v2, v3, v4 = (
-            st.columns(4)
-        )
-
-        v1.metric(
-            "VALUE 표본",
-            f"{vm['games']:,}"
-        )
-
-        v2.metric(
-            "적중률",
-            f"{vm['hit_rate']:.2f}%"
-        )
-
-        v3.metric(
-            "ROI",
-            f"{vm['roi']:+.2f}%"
-        )
-
-        v4.metric(
-            "최대낙폭",
-            f"{vm['max_drawdown']:.2f}u"
-        )
-
-        if (
-            vm["games"]
-            >= min_sample
-            and vm["roi"] > 0
-        ):
-
-            st.success(
-                "🟢 VALUE 조건 통과"
-            )
-
-        else:
-
-            st.warning(
-                "⚠️ VALUE 조건이 충분히 검증되지 않았습니다."
-            )
+    st.dataframe(
+        result.style.format({
+            "적중률":
+                "{:.2f}%",
+            "ROI":
+                "{:+.2f}%",
+            "수익":
+                "{:+.2f}",
+            "최대낙폭":
+                "{:.2f}",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 # ============================================================
-# TAB 4 ODDS
+# TAB 4
 # ============================================================
 
 with tabs[3]:
 
     st.subheader(
-        "📈 배당구간별 실제 결과"
+        "📈 배당구간별 실제 승률"
     )
 
     if df.empty:
@@ -2834,16 +3101,19 @@ with tabs[3]:
         x = df.copy()
 
         x = x[
-            x["home_odds"].notna()
+            x[
+                "home_odds"
+            ].notna()
         ]
 
         if not x.empty:
 
-            x["배당구간"] = (
-                x["home_odds"]
-                .apply(
-                    odds_bucket
-                )
+            x[
+                "배당구간"
+            ] = x[
+                "home_odds"
+            ].apply(
+                odds_bucket
             )
 
             summary = (
@@ -2859,46 +3129,64 @@ with tabs[3]:
 
                     홈승=(
                         "result",
-                        lambda s:
-                        (s == "H").sum(),
+                        lambda x:
+                        (x == "H").sum(),
                     ),
 
                     무=(
                         "result",
-                        lambda s:
-                        (s == "D").sum(),
+                        lambda x:
+                        (x == "D").sum(),
                     ),
 
                     원정승=(
                         "result",
-                        lambda s:
-                        (s == "A").sum(),
+                        lambda x:
+                        (x == "A").sum(),
                     ),
 
                 )
                 .reset_index()
             )
 
-            summary["홈승률"] = (
-                summary["홈승"]
+            summary[
+                "홈승률"
+            ] = (
+                summary[
+                    "홈승"
+                ]
                 /
-                summary["경기수"]
+                summary[
+                    "경기수"
+                ]
                 *
                 100
             )
 
-            summary["무승부율"] = (
-                summary["무"]
+            summary[
+                "무승부율"
+            ] = (
+                summary[
+                    "무"
+                ]
                 /
-                summary["경기수"]
+                summary[
+                    "경기수"
+                ]
                 *
                 100
             )
 
-            summary["원정승률"] = (
-                summary["원정승"]
+            summary[
+                "원정승률"
+            ] = (
+                summary[
+                    "원정승"
+                ]
                 /
-                summary["경기수"]
+                summary[
+                    "경기수"
+                ]
                 *
                 100
             )
@@ -2918,279 +3206,295 @@ with tabs[3]:
 
 
 # ============================================================
-# TAB 5 SPORT/LEAGUE
+# TAB 5
 # ============================================================
 
 with tabs[4]:
 
     st.subheader(
-        "🏆 종목별 / 리그별 ROI"
+        "🏆 종목별 ROI"
     )
 
-    if df.empty:
+    bt = run_backtest(
+        df,
+        min_odds,
+        max_odds,
+        min_probability,
+    )
 
-        st.info(
-            "데이터가 없습니다."
+    if not bt.empty:
+
+        sport_table = (
+            bt.groupby(
+                "sport"
+            )
+            .agg(
+
+                경기수=(
+                    "hit",
+                    "count",
+                ),
+
+                적중=(
+                    "hit",
+                    "sum",
+                ),
+
+                수익=(
+                    "profit",
+                    "sum",
+                ),
+
+            )
+            .reset_index()
         )
 
-    else:
-
-        bt = run_backtest(
-            df,
-            min_odds,
-            max_odds,
-            min_probability,
+        sport_table[
+            "적중률"
+        ] = (
+            sport_table[
+                "적중"
+            ]
+            /
+            sport_table[
+                "경기수"
+            ]
+            *
+            100
         )
 
-        if not bt.empty:
+        sport_table[
+            "ROI"
+        ] = (
+            sport_table[
+                "수익"
+            ]
+            /
+            sport_table[
+                "경기수"
+            ]
+            *
+            100
+        )
 
-            sport_table = (
-                bt.groupby(
-                    "sport"
-                )
-                .agg(
+        st.dataframe(
+            sport_table.style.format({
+                "적중률":
+                    "{:.2f}%",
+                "ROI":
+                    "{:+.2f}%",
+                "수익":
+                    "{:+.2f}",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
 
-                    경기수=(
-                        "hit",
-                        "count",
-                    ),
+        st.subheader(
+            "리그별"
+        )
 
-                    적중=(
-                        "hit",
-                        "sum",
-                    ),
-
-                    수익=(
-                        "profit",
-                        "sum",
-                    ),
-
-                )
-                .reset_index()
+        league_table = (
+            bt.groupby(
+                [
+                    "sport",
+                    "league",
+                ]
             )
+            .agg(
 
-            sport_table["적중률"] = (
-                sport_table["적중"]
-                /
-                sport_table["경기수"]
-                *
-                100
+                경기수=(
+                    "hit",
+                    "count",
+                ),
+
+                적중=(
+                    "hit",
+                    "sum",
+                ),
+
+                수익=(
+                    "profit",
+                    "sum",
+                ),
+
             )
+            .reset_index()
+        )
 
-            sport_table["ROI"] = (
-                sport_table["수익"]
-                /
-                sport_table["경기수"]
-                *
-                100
-            )
+        league_table[
+            "적중률"
+        ] = (
+            league_table[
+                "적중"
+            ]
+            /
+            league_table[
+                "경기수"
+            ]
+            *
+            100
+        )
 
-            st.write(
-                "종목별"
-            )
+        league_table[
+            "ROI"
+        ] = (
+            league_table[
+                "수익"
+            ]
+            /
+            league_table[
+                "경기수"
+            ]
+            *
+            100
+        )
 
-            st.dataframe(
-                sport_table.style.format({
-                    "적중률":
-                        "{:.2f}%",
-                    "ROI":
-                        "{:+.2f}%",
-                    "수익":
-                        "{:+.2f}",
-                }),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            league_table = (
-                bt.groupby(
-                    [
-                        "sport",
-                        "league",
-                    ]
-                )
-                .agg(
-
-                    경기수=(
-                        "hit",
-                        "count",
-                    ),
-
-                    적중=(
-                        "hit",
-                        "sum",
-                    ),
-
-                    수익=(
-                        "profit",
-                        "sum",
-                    ),
-
-                )
-                .reset_index()
-            )
-
-            league_table["적중률"] = (
-                league_table["적중"]
-                /
-                league_table["경기수"]
-                *
-                100
-            )
-
-            league_table["ROI"] = (
-                league_table["수익"]
-                /
-                league_table["경기수"]
-                *
-                100
-            )
-
-            st.write(
-                "리그별"
-            )
-
-            st.dataframe(
-                league_table.sort_values(
-                    "ROI",
-                    ascending=False,
-                )
-                .style.format({
-                    "적중률":
-                        "{:.2f}%",
-                    "ROI":
-                        "{:+.2f}%",
-                    "수익":
-                        "{:+.2f}",
-                }),
-                use_container_width=True,
-                hide_index=True,
-            )
+        st.dataframe(
+            league_table.sort_values(
+                "ROI",
+                ascending=False,
+            ).style.format({
+                "적중률":
+                    "{:.2f}%",
+                "ROI":
+                    "{:+.2f}%",
+                "수익":
+                    "{:+.2f}",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 # ============================================================
-# TAB 6 DATABASE
+# TAB 6
 # ============================================================
 
 with tabs[5]:
 
     st.subheader(
-        "🗄️ 데이터베이스"
+        "🗄️ 경기 데이터"
     )
 
-    st.write(
-        f"DB 위치: `{DB_PATH}`"
-    )
+    if df.empty:
 
-    if not df.empty:
-
-        st.dataframe(
-            df.tail(500),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        csv = df.to_csv(
-            index=False
-        ).encode(
-            "utf-8-sig"
-        )
-
-        st.download_button(
-            "⬇️ 전체 데이터 CSV",
-            csv,
-            "sports_database.csv",
-            "text/csv",
+        st.info(
+            "데이터 없음"
         )
 
     else:
 
-        st.info(
-            "DB가 비어 있습니다."
+        st.dataframe(
+            df.tail(1000),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv = (
+            df.to_csv(
+                index=False
+            )
+            .encode(
+                "utf-8-sig"
+            )
+        )
+
+        st.download_button(
+            "⬇️ CSV 다운로드",
+            csv,
+            "sports_data.csv",
+            "text/csv",
+            use_container_width=True,
         )
 
 
 # ============================================================
-# TAB 7 SOURCES
+# TAB 7
 # ============================================================
 
 with tabs[6]:
 
     st.subheader(
-        "⚙️ 데이터 출처 상태"
+        "⚙️ 데이터 수집 상태"
     )
 
-    source_df = source_status()
+    try:
 
-    if source_df.empty:
+        con = get_connection()
 
-        st.info(
-            "아직 수집 기록이 없습니다."
+        logs = pd.read_sql_query(
+            """
+            SELECT
+                source,
+                MAX(created_at)
+                    AS last_time,
+                SUM(
+                    CASE
+                    WHEN success=1
+                    THEN 1
+                    ELSE 0
+                    END
+                ) AS success_count,
+                COUNT(*) AS call_count,
+                SUM(rows) AS rows
+            FROM source_log
+            GROUP BY source
+            ORDER BY source
+            """,
+            con,
         )
 
-    else:
+        con.close()
 
-        st.dataframe(
-            source_df,
-            use_container_width=True,
-            hide_index=True,
+        if logs.empty:
+
+            st.info(
+                "수집 기록 없음"
+            )
+
+        else:
+
+            st.dataframe(
+                logs,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    except Exception as e:
+
+        st.error(
+            str(e)
         )
 
     st.markdown(
         """
-### 현재 연결된 공개 출처
+### 오류 처리
 
-- SportScore
-- 1.ML
-- SportSRC V1
-- 사용자 제공 CSV
-
-API 키 입력은 사용하지 않습니다.
-"""
-    )
-
-    st.markdown(
-        """
-**SportScore:** 공개 JSON API는 축구·농구·크리켓·테니스의
-경기, 결과, 순위 및 통계를 제공합니다.
-
-**1.ML:** 공개 JSON으로 실시간 경기와 sportsbook lines를
-제공합니다.
-
-**SportSRC:** 공개 V1 API에서 경기 일정과 결과 등을
-제공합니다.
+- 연결 실패 → 자동 재시도
+- Timeout → 자동 재시도
+- HTTP 429 → 대기 후 재시도
+- HTTP 403/401 → 해당 출처만 중단
+- JSON 파싱 실패 → 해당 출처만 건너뜀
+- 개별 경기 오류 → 해당 경기만 건너뜀
+- DB 저장 오류 → 전체 수집 중단하지 않음
+- 중복 경기 → 자동 병합
+- 오류 → `source_log`에 기록
 """
     )
 
 
 # ============================================================
-# FOOTER
+# Footer
 # ============================================================
 
 st.divider()
 
-st.markdown(
-    """
-### ⚠️ 분석 원칙
-
-이 프로그램은 **수익을 보장하지 않습니다.**
-
-추천 조건은 다음 순서로 검증합니다.
-
-1. 충분한 표본
-2. 과거 백테스트
-3. 별도 검증기간
-4. 최신 테스트기간
-5. ROI
-6. 최대낙폭
-7. 연속 손실
-8. 기대값(EV)
-
-과거 수익률이 미래 수익을 보장하지 않으며,
-실제 베팅 판단에는 별도의 위험관리가 필요합니다.
-"""
+st.caption(
+    "Sports Analyzer PRO | "
+    "공개 데이터 기반 분석 프로그램"
 )
 
-st.caption(
-    "Sports Analyzer PRO"
+st.warning(
+    "과거 백테스트 결과는 미래 수익을 보장하지 않습니다."
 )
