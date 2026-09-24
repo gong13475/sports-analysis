@@ -1,8 +1,8 @@
 import streamlit as st
 import sqlite3
+import requests
 import pandas as pd
 from datetime import datetime
-import os
 
 
 # =========================================================
@@ -11,15 +11,17 @@ import os
 
 DB_FILE = "historical_odds.db"
 
+BASE_URL = "https://api.the-odds-api.com/v4"
+
 st.set_page_config(
-    page_title="전종목 승무패 분석",
-    page_icon="🏆",
+    page_title="전종목 해외배당 분석",
+    page_icon="⚽",
     layout="wide"
 )
 
 
 # =========================================================
-# DB 초기화
+# DB 생성
 # =========================================================
 
 def init_database():
@@ -28,7 +30,6 @@ def init_database():
 
     cursor = conn.cursor()
 
-    # 역사적 경기 데이터
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS historical_games (
 
@@ -72,7 +73,6 @@ def init_database():
         )
     """)
 
-    # 사용자 예측 기록
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
 
@@ -94,24 +94,6 @@ def init_database():
 
             away_odds REAL,
 
-            market_home_prob REAL,
-
-            market_draw_prob REAL,
-
-            market_away_prob REAL,
-
-            historical_home_prob REAL,
-
-            historical_draw_prob REAL,
-
-            historical_away_prob REAL,
-
-            final_home_prob REAL,
-
-            final_draw_prob REAL,
-
-            final_away_prob REAL,
-
             predicted TEXT,
 
             actual_result TEXT,
@@ -131,89 +113,620 @@ init_database()
 # DB 연결
 # =========================================================
 
-def get_connection():
+def db():
 
     return sqlite3.connect(DB_FILE)
 
 
 # =========================================================
-# 배당 → 확률
+# API 테스트
 # =========================================================
 
-def calculate_market_probability(
-    home_odds,
-    draw_odds,
-    away_odds
+def test_api(api_key):
+
+    if not api_key:
+
+        return False, "API 키가 없습니다."
+
+    try:
+
+        response = requests.get(
+
+            BASE_URL + "/sports/",
+
+            params={
+                "apiKey": api_key
+            },
+
+            timeout=15
+        )
+
+
+        if response.status_code == 200:
+
+            return True, "API 연결 성공"
+
+        return False, (
+            f"API 오류 "
+            f"{response.status_code}: "
+            f"{response.text[:200]}"
+        )
+
+
+    except Exception as e:
+
+        return False, str(e)
+
+
+# =========================================================
+# 현재 배당 가져오기
+# =========================================================
+
+def get_odds(
+    api_key,
+    sport_key
+):
+
+    url = (
+        f"{BASE_URL}/sports/"
+        f"{sport_key}/odds/"
+    )
+
+
+    params = {
+
+        "apiKey": api_key,
+
+        "regions": "us",
+
+        "markets": "h2h",
+
+        "oddsFormat": "decimal"
+    }
+
+
+    try:
+
+        response = requests.get(
+
+            url,
+
+            params=params,
+
+            timeout=30
+        )
+
+
+        if response.status_code != 200:
+
+            return None
+
+
+        return response.json()
+
+
+    except:
+
+        return None
+
+
+# =========================================================
+# 최근 경기 결과
+# =========================================================
+
+def get_scores(
+    api_key,
+    sport_key
+):
+
+    url = (
+        f"{BASE_URL}/sports/"
+        f"{sport_key}/scores/"
+    )
+
+
+    params = {
+
+        "apiKey": api_key,
+
+        "daysFrom": 3,
+
+        "dateFormat": "iso"
+    }
+
+
+    try:
+
+        response = requests.get(
+
+            url,
+
+            params=params,
+
+            timeout=30
+        )
+
+
+        if response.status_code != 200:
+
+            return None
+
+
+        return response.json()
+
+
+    except:
+
+        return None
+
+
+# =========================================================
+# 실제 결과 계산
+# =========================================================
+
+def result_from_score(
+    sport,
+    home_score,
+    away_score
+):
+
+    if home_score is None:
+        return None
+
+    if away_score is None:
+        return None
+
+
+    if home_score > away_score:
+
+        return "승"
+
+    elif home_score < away_score:
+
+        return "패"
+
+    else:
+
+        if sport == "축구":
+
+            return "무"
+
+        return None
+
+
+# =========================================================
+# 결과 DB 저장
+# =========================================================
+
+def update_results(
+    api_key,
+    sports
+):
+
+    total = 0
+
+
+    conn = db()
+
+    cursor = conn.cursor()
+
+
+    for sport_name, sport_key in sports.items():
+
+        games = get_scores(
+            api_key,
+            sport_key
+        )
+
+
+        if not games:
+
+            continue
+
+
+        for game in games:
+
+            if not game.get(
+                "completed",
+                False
+            ):
+
+                continue
+
+
+            game_id = game.get(
+                "id"
+            )
+
+            home = game.get(
+                "home_team",
+                ""
+            )
+
+            away = game.get(
+                "away_team",
+                ""
+            )
+
+            game_date = game.get(
+                "commence_time",
+                ""
+            )
+
+            scores = game.get(
+                "scores"
+            )
+
+
+            if not scores:
+
+                continue
+
+
+            home_score = None
+
+            away_score = None
+
+
+            for item in scores:
+
+                name = item.get(
+                    "name",
+                    ""
+                )
+
+                score = item.get(
+                    "score"
+                )
+
+
+                try:
+
+                    score = float(score)
+
+                except:
+
+                    continue
+
+
+                if name == home:
+
+                    home_score = score
+
+                elif name == away:
+
+                    away_score = score
+
+
+            if (
+                home_score is None
+                or
+                away_score is None
+            ):
+
+                continue
+
+
+            result = result_from_score(
+
+                sport_name,
+
+                home_score,
+
+                away_score
+            )
+
+
+            cursor.execute(
+                """
+                UPDATE historical_games
+
+                SET
+
+                    home_score=?,
+
+                    away_score=?,
+
+                    actual_result=?,
+
+                    completed=1,
+
+                    updated_at=?
+
+                WHERE game_id=?
+                """,
+
+                (
+
+                    home_score,
+
+                    away_score,
+
+                    result,
+
+                    datetime.now()
+                    .isoformat(),
+
+                    game_id
+                )
+            )
+
+
+            total += cursor.rowcount
+
+
+    conn.commit()
+
+    conn.close()
+
+
+    return total
+
+
+# =========================================================
+# 배당 DB 저장
+# =========================================================
+
+def save_odds(
+    sport_name,
+    games
+):
+
+    if not games:
+
+        return 0
+
+
+    conn = db()
+
+    cursor = conn.cursor()
+
+    total = 0
+
+
+    for game in games:
+
+        game_id = game.get(
+            "id"
+        )
+
+        home = game.get(
+            "home_team",
+            ""
+        )
+
+        away = game.get(
+            "away_team",
+            ""
+        )
+
+        game_date = game.get(
+            "commence_time",
+            ""
+        )
+
+
+        for bookmaker in game.get(
+            "bookmakers",
+            []
+        ):
+
+            bookmaker_name = bookmaker.get(
+                "title",
+                ""
+            )
+
+
+            for market in bookmaker.get(
+                "markets",
+                []
+            ):
+
+                if market.get(
+                    "key"
+                ) != "h2h":
+
+                    continue
+
+
+                home_odds = None
+
+                draw_odds = None
+
+                away_odds = None
+
+
+                for outcome in market.get(
+                    "outcomes",
+                    []
+                ):
+
+                    name = outcome.get(
+                        "name",
+                        ""
+                    )
+
+                    price = outcome.get(
+                        "price"
+                    )
+
+
+                    try:
+
+                        price = float(price)
+
+                    except:
+
+                        continue
+
+
+                    if name == home:
+
+                        home_odds = price
+
+                    elif name == away:
+
+                        away_odds = price
+
+                    elif name.lower() == "draw":
+
+                        draw_odds = price
+
+
+                if (
+                    home_odds is None
+                    or
+                    away_odds is None
+                ):
+
+                    continue
+
+
+                now = datetime.now().isoformat()
+
+
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO
+                    historical_games
+                    (
+
+                        game_id,
+                        sport,
+                        league,
+                        game_date,
+                        home_team,
+                        away_team,
+                        home_odds,
+                        draw_odds,
+                        away_odds,
+                        bookmaker,
+                        source,
+                        created_at,
+                        updated_at
+
+                    )
+
+                    VALUES
+                    (
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?,
+                        ?
+                    )
+                    """,
+
+                    (
+
+                        game_id,
+
+                        sport_name,
+
+                        sport_name,
+
+                        game_date,
+
+                        home,
+
+                        away,
+
+                        home_odds,
+
+                        draw_odds,
+
+                        away_odds,
+
+                        bookmaker_name,
+
+                        "The Odds API",
+
+                        now,
+
+                        now
+                    )
+                )
+
+
+                if cursor.rowcount > 0:
+
+                    total += 1
+
+
+    conn.commit()
+
+    conn.close()
+
+
+    return total
+
+
+# =========================================================
+# 배당 확률
+# =========================================================
+
+def odds_probability(
+    home,
+    draw,
+    away
 ):
 
     values = []
 
-    if home_odds and home_odds > 1:
+    values.append(
+        1 / home
+    )
+
+
+    if draw:
 
         values.append(
-            1 / home_odds
+            1 / draw
         )
 
-    else:
 
-        values.append(0)
-
-
-    if draw_odds is not None:
-
-        if draw_odds > 1:
-
-            values.append(
-                1 / draw_odds
-            )
-
-        else:
-
-            values.append(0)
-
-
-    if away_odds and away_odds > 1:
-
-        values.append(
-            1 / away_odds
-        )
-
-    else:
-
-        values.append(0)
+    values.append(
+        1 / away
+    )
 
 
     total = sum(values)
 
 
-    if total <= 0:
-
-        return []
-
-
     return [
-        value / total * 100
-        for value in values
+        x / total * 100
+        for x in values
     ]
 
 
 # =========================================================
-# 과거 배당구간 실제 결과 검색
+# 과거 DB 분석
 # =========================================================
 
-def get_historical_statistics(
+def historical_analysis(
+
     sport,
     home_odds,
     draw_odds,
     away_odds
+
 ):
 
-    conn = get_connection()
+    conn = db()
+
 
     df = pd.read_sql_query(
+
         """
-        SELECT
-            *
+        SELECT *
         FROM historical_games
 
         WHERE
@@ -225,8 +738,10 @@ def get_historical_statistics(
         AND
             away_odds IS NOT NULL
         """,
+
         conn
     )
+
 
     conn.close()
 
@@ -236,7 +751,6 @@ def get_historical_statistics(
         return None
 
 
-    # 종목 필터
     df = df[
         df["sport"] == sport
     ]
@@ -246,10 +760,6 @@ def get_historical_statistics(
 
         return None
 
-
-    # -----------------------------------------
-    # 홈/원정 배당 범위
-    # -----------------------------------------
 
     condition = (
 
@@ -273,11 +783,7 @@ def get_historical_statistics(
     )
 
 
-    # -----------------------------------------
-    # 축구 무 배당
-    # -----------------------------------------
-
-    if draw_odds is not None:
+    if draw_odds:
 
         condition &= (
 
@@ -297,7 +803,7 @@ def get_historical_statistics(
 
     matched = df[
         condition
-    ].copy()
+    ]
 
 
     if matched.empty:
@@ -305,328 +811,293 @@ def get_historical_statistics(
         return None
 
 
-    total = len(
-        matched
+    total = len(matched)
+
+
+    win = int(
+        (
+            matched[
+                "actual_result"
+            ]
+            ==
+            "승"
+        ).sum()
     )
 
 
-    result_counts = (
-        matched[
-            "actual_result"
-        ]
-        .value_counts()
+    draw = int(
+        (
+            matched[
+                "actual_result"
+            ]
+            ==
+            "무"
+        ).sum()
     )
 
 
-    home_count = int(
-        result_counts.get(
-            "승",
-            0
-        )
-    )
-
-
-    draw_count = int(
-        result_counts.get(
-            "무",
-            0
-        )
-    )
-
-
-    away_count = int(
-        result_counts.get(
-            "패",
-            0
-        )
+    lose = int(
+        (
+            matched[
+                "actual_result"
+            ]
+            ==
+            "패"
+        ).sum()
     )
 
 
     return {
 
-        "total":
-            total,
+        "total": total,
 
-        "승_건수":
-            home_count,
+        "승건수": win,
 
-        "무_건수":
-            draw_count,
+        "무건수": draw,
 
-        "패_건수":
-            away_count,
+        "패건수": lose,
 
-        "승":
-            home_count
-            /
-            total
-            *
-            100,
+        "승": win / total * 100,
 
-        "무":
-            draw_count
-            /
-            total
-            *
-            100,
+        "무": draw / total * 100,
 
-        "패":
-            away_count
-            /
-            total
-            *
-            100
+        "패": lose / total * 100
     }
 
 
 # =========================================================
-# 예측 저장
-# =========================================================
-
-def save_prediction(
-    sport,
-    league,
-    home_team,
-    away_team,
-    home_odds,
-    draw_odds,
-    away_odds,
-    market_probs,
-    historical,
-    final_probs,
-    predicted
-):
-
-    market_home = (
-        market_probs[0]
-        if len(market_probs) > 0
-        else None
-    )
-
-    market_draw = (
-        market_probs[1]
-        if len(market_probs) == 3
-        else None
-    )
-
-    market_away = (
-        market_probs[2]
-        if len(market_probs) == 3
-        else market_probs[1]
-    )
-
-
-    historical_home = (
-        historical["승"]
-        if historical
-        else None
-    )
-
-    historical_draw = (
-        historical["무"]
-        if historical
-        else None
-    )
-
-    historical_away = (
-        historical["패"]
-        if historical
-        else None
-    )
-
-
-    final_home = final_probs.get(
-        "승"
-    )
-
-    final_draw = final_probs.get(
-        "무"
-    )
-
-    final_away = final_probs.get(
-        "패"
-    )
-
-
-    conn = get_connection()
-
-    conn.execute(
-        """
-        INSERT INTO predictions
-        (
-
-            created_at,
-
-            sport,
-
-            league,
-
-            home_team,
-
-            away_team,
-
-            home_odds,
-
-            draw_odds,
-
-            away_odds,
-
-            market_home_prob,
-
-            market_draw_prob,
-
-            market_away_prob,
-
-            historical_home_prob,
-
-            historical_draw_prob,
-
-            historical_away_prob,
-
-            final_home_prob,
-
-            final_draw_prob,
-
-            final_away_prob,
-
-            predicted
-
-        )
-
-        VALUES
-        (
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?
-        )
-        """,
-        (
-
-            datetime.now()
-            .strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
-
-            sport,
-
-            league,
-
-            home_team,
-
-            away_team,
-
-            home_odds,
-
-            draw_odds,
-
-            away_odds,
-
-            market_home,
-
-            market_draw,
-
-            market_away,
-
-            historical_home,
-
-            historical_draw,
-
-            historical_away,
-
-            final_home,
-
-            final_draw,
-
-            final_away,
-
-            predicted
-        )
-    )
-
-    conn.commit()
-
-    conn.close()
-
-
-# =========================================================
-# 종목 선택
+# 화면
 # =========================================================
 
 st.title(
-    "🏆 전종목 스포츠 배당 분석"
+    "🏆 전종목 해외배당 분석"
 )
 
 st.caption(
-    "배당 입력 → 과거 실제 경기 결과 → 확률 분석 → 최종 예측"
+    "배당 입력 → 과거 실제 경기 결과 → 확률 분석"
 )
 
 
-sport = st.radio(
-    "종목 선택",
-    [
-        "⚽ 축구",
-        "⚾ 야구",
-        "🏀 농구",
-        "🏐 배구"
-    ],
+# =========================================================
+# API 키 입력
+# =========================================================
+
+with st.sidebar:
+
+    st.header(
+        "⚙️ API 설정"
+    )
+
+
+    api_key = st.text_input(
+
+        "The Odds API Key",
+
+        type="password",
+
+        placeholder="API 키 입력"
+    )
+
+
+    if st.button(
+        "🔑 API 연결 테스트",
+        use_container_width=True
+    ):
+
+        ok, message = test_api(
+            api_key
+        )
+
+
+        if ok:
+
+            st.success(
+                "🟢 " + message
+            )
+
+        else:
+
+            st.error(
+                "🔴 " + message
+            )
+
+
+    st.info(
+        "API 키는 화면에 입력해서 사용할 수 있습니다."
+    )
+
+
+# =========================================================
+# 스포츠
+# =========================================================
+
+sports = {
+
+    "⚽ 축구": "soccer_epl",
+
+    "⚾ MLB": "baseball_mlb",
+
+    "⚾ KBO": "baseball_kbo",
+
+    "⚾ NPB": "baseball_npb",
+
+    "🏀 NBA": "basketball_nba",
+
+    "🏀 유로리그": "basketball_euroleague"
+}
+
+
+sport_select = st.radio(
+
+    "종목",
+
+    list(sports.keys()),
+
     horizontal=True
 )
 
 
-if sport == "⚽ 축구":
+sport_key = sports[
+    sport_select
+]
 
-    sport_name = "EPL"
 
-    sport_title = "축구"
+if sport_select == "⚽ 축구":
 
-    is_soccer = True
-
-elif sport == "⚾ 야구":
-
-    sport_name = "MLB"
-
-    sport_title = "야구"
-
-    is_soccer = False
-
-elif sport == "🏀 농구":
-
-    sport_name = "NBA"
-
-    sport_title = "농구"
-
-    is_soccer = False
+    sport_type = "축구"
 
 else:
 
-    sport_name = "VOLLEYBALL"
+    sport_type = "야구" if "⚾" in sport_select else "농구"
 
-    sport_title = "배구"
 
-    is_soccer = False
+# =========================================================
+# DB 업데이트
+# =========================================================
+
+st.subheader(
+    "🗄️ 데이터 업데이트"
+)
+
+
+c1, c2 = st.columns(2)
+
+
+with c1:
+
+    if st.button(
+        "📥 현재 배당 가져오기",
+        use_container_width=True
+    ):
+
+        if not api_key:
+
+            st.error(
+                "먼저 API 키를 입력하세요."
+            )
+
+        else:
+
+            games = get_odds(
+                api_key,
+                sport_key
+            )
+
+
+            if games:
+
+                saved = save_odds(
+
+                    sport_type,
+
+                    games
+                )
+
+
+                st.success(
+                    f"배당 {saved}건 저장 완료"
+                )
+
+            else:
+
+                st.warning(
+                    "배당 데이터를 가져오지 못했습니다."
+                )
+
+
+with c2:
+
+    if st.button(
+        "🏁 실제 경기결과 업데이트",
+        use_container_width=True
+    ):
+
+        if not api_key:
+
+            st.error(
+                "먼저 API 키를 입력하세요."
+            )
+
+        else:
+
+            updated = update_results(
+
+                api_key,
+
+                {
+                    sport_type:
+                    sport_key
+                }
+            )
+
+
+            st.success(
+                f"실제 결과 {updated}건 업데이트"
+            )
+
+
+# =========================================================
+# DB 현황
+# =========================================================
+
+conn = db()
+
+
+total_db = conn.execute(
+    """
+    SELECT COUNT(*)
+    FROM historical_games
+    """
+).fetchone()[0]
+
+
+completed_db = conn.execute(
+    """
+    SELECT COUNT(*)
+    FROM historical_games
+    WHERE actual_result IS NOT NULL
+    """
+).fetchone()[0]
+
+
+conn.close()
+
+
+st.info(
+    f"현재 DB: "
+    f"전체 {total_db:,}건 / "
+    f"실제 결과 {completed_db:,}건"
+)
 
 
 # =========================================================
 # 경기 입력
 # =========================================================
 
+st.divider()
+
 st.subheader(
-    "🏟️ 경기 정보"
+    "🏟️ 경기 입력"
 )
 
 
@@ -637,7 +1108,7 @@ with c1:
 
     home_team = st.text_input(
         "홈팀",
-        placeholder="예: LA다저스"
+        placeholder="홈팀 이름"
     )
 
 
@@ -645,15 +1116,8 @@ with c2:
 
     away_team = st.text_input(
         "원정팀",
-        placeholder="예: 샌디에이고"
+        placeholder="원정팀 이름"
     )
-
-
-league = st.text_input(
-    "리그",
-    value=sport_name,
-    placeholder="예: MLB / EPL / NBA"
-)
 
 
 # =========================================================
@@ -665,7 +1129,7 @@ st.subheader(
 )
 
 
-if is_soccer:
+if sport_type == "축구":
 
     c1, c2, c3 = st.columns(3)
 
@@ -708,7 +1172,7 @@ else:
     with c1:
 
         home_odds = st.number_input(
-            "홈팀 승 배당",
+            "홈 승 배당",
             min_value=1.01,
             value=1.70,
             step=0.01
@@ -718,7 +1182,7 @@ else:
     with c2:
 
         away_odds = st.number_input(
-            "원정팀 승 배당",
+            "원정 승 배당",
             min_value=1.01,
             value=2.10,
             step=0.01
@@ -729,17 +1193,14 @@ else:
 
 
 # =========================================================
-# 분석 버튼
+# 분석
 # =========================================================
 
-analyze = st.button(
-    "🔍 분석하기",
+if st.button(
+    "🔍 경기 분석",
     type="primary",
     use_container_width=True
-)
-
-
-if analyze:
+):
 
     if not home_team or not away_team:
 
@@ -750,58 +1211,45 @@ if analyze:
         st.stop()
 
 
+    probabilities = odds_probability(
+
+        home_odds,
+
+        draw_odds,
+
+        away_odds
+    )
+
+
+    if sport_type == "축구":
+
+        market_home = probabilities[0]
+
+        market_draw = probabilities[1]
+
+        market_away = probabilities[2]
+
+    else:
+
+        market_home = probabilities[0]
+
+        market_draw = None
+
+        market_away = probabilities[1]
+
+
     # -----------------------------------------
     # 배당 확률
     # -----------------------------------------
 
-    market_probs = (
-        calculate_market_probability(
-            home_odds,
-            draw_odds,
-            away_odds
-        )
-    )
-
-
-    if is_soccer:
-
-        market_home = market_probs[0]
-
-        market_draw = market_probs[1]
-
-        market_away = market_probs[2]
-
-    else:
-
-        market_home = market_probs[0]
-
-        market_draw = None
-
-        market_away = market_probs[1]
-
-
-    # -----------------------------------------
-    # 과거 실제 결과
-    # -----------------------------------------
-
-    historical = (
-        get_historical_statistics(
-            sport_name,
-            home_odds,
-            draw_odds,
-            away_odds
-        )
-    )
-
-
     st.divider()
 
     st.subheader(
-        "📊 배당 기반 확률"
+        "📊 배당 기준 확률"
     )
 
 
-    if is_soccer:
+    if sport_type == "축구":
 
         c1, c2, c3 = st.columns(3)
 
@@ -829,7 +1277,6 @@ if analyze:
                 f"{market_away:.1f}%"
             )
 
-
     else:
 
         c1, c2 = st.columns(2)
@@ -838,7 +1285,7 @@ if analyze:
         with c1:
 
             st.metric(
-                "홈팀 승",
+                "홈 승",
                 f"{market_home:.1f}%"
             )
 
@@ -846,7 +1293,7 @@ if analyze:
         with c2:
 
             st.metric(
-                "원정팀 승",
+                "원정 승",
                 f"{market_away:.1f}%"
             )
 
@@ -855,20 +1302,32 @@ if analyze:
     # 과거 결과
     # -----------------------------------------
 
-    st.subheader(
-        "📚 과거 동일 배당구간 실제 결과"
+    history = historical_analysis(
+
+        sport_type,
+
+        home_odds,
+
+        draw_odds,
+
+        away_odds
     )
 
 
-    if historical:
+    st.subheader(
+        "📚 과거 동일 배당 실제 결과"
+    )
 
-        st.info(
-            f"유사 배당 경기 "
-            f"**{historical['total']}경기**"
+
+    if history:
+
+        st.write(
+            f"유사 경기 "
+            f"**{history['total']}경기**"
         )
 
 
-        if is_soccer:
+        if sport_type == "축구":
 
             c1, c2, c3 = st.columns(3)
 
@@ -877,8 +1336,8 @@ if analyze:
 
                 st.metric(
                     "승",
-                    f"{historical['승']:.1f}%",
-                    f"{historical['승_건수']}경기"
+                    f"{history['승']:.1f}%",
+                    f"{history['승건수']}경기"
                 )
 
 
@@ -886,8 +1345,8 @@ if analyze:
 
                 st.metric(
                     "무",
-                    f"{historical['무']:.1f}%",
-                    f"{historical['무_건수']}경기"
+                    f"{history['무']:.1f}%",
+                    f"{history['무건수']}경기"
                 )
 
 
@@ -895,8 +1354,8 @@ if analyze:
 
                 st.metric(
                     "패",
-                    f"{historical['패']:.1f}%",
-                    f"{historical['패_건수']}경기"
+                    f"{history['패']:.1f}%",
+                    f"{history['패건수']}경기"
                 )
 
 
@@ -908,61 +1367,60 @@ if analyze:
             with c1:
 
                 st.metric(
-                    "홈팀 승",
-                    f"{historical['승']:.1f}%",
-                    f"{historical['승_건수']}경기"
+                    "홈 승",
+                    f"{history['승']:.1f}%",
+                    f"{history['승건수']}경기"
                 )
 
 
             with c2:
 
                 st.metric(
-                    "원정팀 승",
-                    f"{historical['패']:.1f}%",
-                    f"{historical['패_건수']}경기"
+                    "원정 승",
+                    f"{history['패']:.1f}%",
+                    f"{history['패건수']}경기"
                 )
 
 
     else:
 
         st.warning(
-            "현재 DB에 해당 배당구간의 "
+            "현재 DB에 유사 배당의 "
             "실제 경기 결과가 없습니다."
         )
 
 
     # -----------------------------------------
-    # 최종 확률
+    # 최종 예측
     # -----------------------------------------
 
-    if historical:
+    if history:
 
         final_home = (
             market_home * 0.5
             +
-            historical["승"] * 0.5
+            history["승"] * 0.5
         )
 
 
         final_away = (
             market_away * 0.5
             +
-            historical["패"] * 0.5
+            history["패"] * 0.5
         )
 
 
-        if is_soccer:
+        if sport_type == "축구":
 
             final_draw = (
                 market_draw * 0.5
                 +
-                historical["무"] * 0.5
+                history["무"] * 0.5
             )
 
         else:
 
             final_draw = None
-
 
     else:
 
@@ -973,13 +1431,9 @@ if analyze:
         final_draw = market_draw
 
 
-    # -----------------------------------------
-    # 최종 확률 정규화
-    # -----------------------------------------
+    if sport_type == "축구":
 
-    if is_soccer:
-
-        total_final = (
+        total = (
             final_home
             +
             final_draw
@@ -988,90 +1442,86 @@ if analyze:
         )
 
 
-        if total_final > 0:
+        final_home = (
+            final_home
+            /
+            total
+            *
+            100
+        )
 
-            final_home = (
-                final_home
-                /
-                total_final
-                *
-                100
-            )
 
-            final_draw = (
-                final_draw
-                /
-                total_final
-                *
-                100
-            )
+        final_draw = (
+            final_draw
+            /
+            total
+            *
+            100
+        )
 
-            final_away = (
-                final_away
-                /
-                total_final
-                *
-                100
-            )
+
+        final_away = (
+            final_away
+            /
+            total
+            *
+            100
+        )
+
+
+        results = {
+
+            "승": final_home,
+
+            "무": final_draw,
+
+            "패": final_away
+        }
 
 
     else:
 
-        total_final = (
+        total = (
             final_home
             +
             final_away
         )
 
 
-        if total_final > 0:
-
-            final_home = (
-                final_home
-                /
-                total_final
-                *
-                100
-            )
-
-            final_away = (
-                final_away
-                /
-                total_final
-                *
-                100
-            )
-
-
-    # -----------------------------------------
-    # 추천
-    # -----------------------------------------
-
-    final_probs = {
-
-        "승":
-            final_home,
-
-        "패":
-            final_away
-    }
-
-
-    if is_soccer:
-
-        final_probs["무"] = (
-            final_draw
+        final_home = (
+            final_home
+            /
+            total
+            *
+            100
         )
 
 
-    predicted = max(
-        final_probs,
-        key=final_probs.get
+        final_away = (
+            final_away
+            /
+            total
+            *
+            100
+        )
+
+
+        results = {
+
+            "승": final_home,
+
+            "패": final_away
+        }
+
+
+    prediction = max(
+        results,
+        key=results.get
     )
 
 
     # -----------------------------------------
-    # 최종 결과
+    # 최종 표시
     # -----------------------------------------
 
     st.divider()
@@ -1081,7 +1531,7 @@ if analyze:
     )
 
 
-    if is_soccer:
+    if sport_type == "축구":
 
         c1, c2, c3 = st.columns(3)
 
@@ -1118,7 +1568,7 @@ if analyze:
         with c1:
 
             st.metric(
-                "홈팀 승",
+                "홈 승",
                 f"{final_home:.1f}%"
             )
 
@@ -1126,423 +1576,93 @@ if analyze:
         with c2:
 
             st.metric(
-                "원정팀 승",
+                "원정 승",
                 f"{final_away:.1f}%"
             )
 
 
     st.success(
-        f"### {home_team} vs {away_team}\n\n"
-        f"## 🎯 최종 추천: {predicted}"
+        f"🎯 최종 추천: **{prediction}**"
     )
 
 
     # -----------------------------------------
-    # 저장
+    # 예측 저장
     # -----------------------------------------
 
-    save_prediction(
-
-        sport_name,
-
-        league,
-
-        home_team,
-
-        away_team,
-
-        home_odds,
-
-        draw_odds,
-
-        away_odds,
-
-        market_probs,
-
-        historical,
-
-        final_probs,
-
-        predicted
-    )
+    conn = db()
 
 
-    st.info(
-        "예측 결과가 DB에 저장되었습니다."
-    )
+    conn.execute(
+        """
+        INSERT INTO predictions
+        (
 
+            created_at,
 
-# =========================================================
-# 경기 종료 후 실제 결과 입력
-# =========================================================
+            sport,
 
-st.divider()
+            league,
 
-st.subheader(
-    "✅ 경기 종료 후 실제 결과"
-)
+            home_team,
 
+            away_team,
 
-conn = get_connection()
+            home_odds,
 
+            draw_odds,
 
-pending = pd.read_sql_query(
-    """
-    SELECT *
-    FROM predictions
+            away_odds,
 
-    WHERE actual_result IS NULL
+            predicted
 
-    ORDER BY id DESC
-
-    LIMIT 30
-    """,
-    conn
-)
-
-
-conn.close()
-
-
-if not pending.empty:
-
-    for _, row in pending.iterrows():
-
-        prediction_id = int(
-            row["id"]
         )
 
-
-        with st.container(
-            border=True
-        ):
-
-            st.write(
-                f"**#{prediction_id} "
-                f"{row['sport']} | "
-                f"{row['home_team']} "
-                f"vs "
-                f"{row['away_team']}**"
-            )
-
-
-            if row["sport"] in [
-                "EPL",
-                "LALIGA",
-                "BUNDESLIGA",
-                "SERIEA",
-                "LIGUE1",
-                "EREDIVISIE",
-                "KLEAGUE1"
-            ]:
-
-                actual = st.selectbox(
-                    "실제 결과",
-                    [
-                        "승",
-                        "무",
-                        "패"
-                    ],
-                    key=f"actual_{prediction_id}"
-                )
-
-            else:
-
-                actual = st.selectbox(
-                    "실제 결과",
-                    [
-                        "승",
-                        "패"
-                    ],
-                    key=f"actual_{prediction_id}"
-                )
-
-
-            if st.button(
-                "실제 결과 저장",
-                key=f"save_actual_{prediction_id}"
-            ):
-
-                correct = (
-                    1
-                    if row["predicted"]
-                    == actual
-                    else 0
-                )
-
-
-                conn = get_connection()
-
-
-                conn.execute(
-                    """
-                    UPDATE predictions
-
-                    SET
-                        actual_result=?,
-                        correct=?
-
-                    WHERE id=?
-                    """,
-                    (
-                        actual,
-                        correct,
-                        prediction_id
-                    )
-                )
-
-
-                conn.commit()
-
-                conn.close()
-
-
-                st.success(
-                    "실제 결과가 저장되었습니다."
-                )
-
-
-                st.rerun()
-
-
-else:
-
-    st.info(
-        "결과 입력을 기다리는 예측 경기가 없습니다."
-    )
-
-
-# =========================================================
-# 누적 적중률
-# =========================================================
-
-st.divider()
-
-st.subheader(
-    "📈 누적 예측 성적"
-)
-
-
-conn = get_connection()
-
-
-results = pd.read_sql_query(
-    """
-    SELECT *
-    FROM predictions
-
-    WHERE actual_result IS NOT NULL
-    """,
-    conn
-)
-
-
-conn.close()
-
-
-if not results.empty:
-
-    total = len(
-        results
-    )
-
-
-    correct = int(
-        results["correct"]
-        .sum()
-    )
-
-
-    accuracy = (
-        correct
-        /
-        total
-        *
-        100
-    )
-
-
-    c1, c2, c3 = st.columns(3)
-
-
-    with c1:
-
-        st.metric(
-            "결과 경기",
-            f"{total}경기"
+        VALUES
+        (
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?
         )
+        """,
 
+        (
 
-    with c2:
-
-        st.metric(
-            "적중",
-            f"{correct}경기"
-        )
-
-
-    with c3:
-
-        st.metric(
-            "전체 적중률",
-            f"{accuracy:.1f}%"
-        )
-
-
-    # -----------------------------------------
-    # 종목별
-    # -----------------------------------------
-
-    st.subheader(
-        "종목별 적중률"
-    )
-
-
-    stats = (
-        results
-        .groupby("sport")
-        .agg(
-            경기수=(
-                "correct",
-                "count"
+            datetime.now()
+            .strftime(
+                "%Y-%m-%d %H:%M:%S"
             ),
 
-            적중=(
-                "correct",
-                "sum"
-            )
+            sport_type,
+
+            sport_select,
+
+            home_team,
+
+            away_team,
+
+            home_odds,
+
+            draw_odds,
+
+            away_odds,
+
+            prediction
         )
-        .reset_index()
     )
 
 
-    stats["적중률"] = (
-        stats["적중"]
-        /
-        stats["경기수"]
-        *
-        100
-    ).round(1)
+    conn.commit()
 
+    conn.close()
 
-    st.dataframe(
-        stats,
-        use_container_width=True,
-        hide_index=True
-    )
-
-
-    # -----------------------------------------
-    # 최근 경기
-    # -----------------------------------------
-
-    st.subheader(
-        "최근 예측 결과"
-    )
-
-
-    display_df = results[
-        [
-            "created_at",
-            "sport",
-            "home_team",
-            "away_team",
-            "predicted",
-            "actual_result",
-            "correct"
-        ]
-    ].copy()
-
-
-    display_df[
-        "correct"
-    ] = display_df[
-        "correct"
-    ].map(
-        {
-            1: "⭕ 적중",
-            0: "❌ 미적중"
-        }
-    )
-
-
-    display_df.columns = [
-        "분석시간",
-        "종목",
-        "홈팀",
-        "원정팀",
-        "예측",
-        "실제결과",
-        "결과"
-    ]
-
-
-    st.dataframe(
-        display_df.head(50),
-        use_container_width=True,
-        hide_index=True
-    )
-
-
-else:
 
     st.info(
-        "경기가 종료되고 실제 결과를 입력하면 "
-        "적중률이 표시됩니다."
-    )
-
-
-# =========================================================
-# DB 상태
-# =========================================================
-
-st.divider()
-
-with st.expander(
-    "🗄️ 현재 DB 상태"
-):
-
-    conn = get_connection()
-
-    try:
-
-        count = conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM historical_games
-            """
-        ).fetchone()[0]
-
-
-        completed = conn.execute(
-            """
-            SELECT COUNT(*)
-            FROM historical_games
-
-            WHERE actual_result IS NOT NULL
-            """
-        ).fetchone()[0]
-
-
-        st.write(
-            f"전체 과거 배당 데이터: "
-            f"**{count:,}건**"
-        )
-
-
-        st.write(
-            f"실제 결과가 연결된 경기: "
-            f"**{completed:,}건**"
-        )
-
-
-    except Exception as e:
-
-        st.error(
-            f"DB 확인 오류: {e}"
-        )
-
-
-    finally:
-
-        conn.close()
+        "예측 결과를 DB에 저장했습니다."
+)
